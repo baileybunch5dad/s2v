@@ -3,10 +3,14 @@ syntax = "proto3";
 package handshake;
 
 service HandShake {
-  rpc SendArray (ArrayRequest) returns (ArrayResponse) {}
+  rpc SendTable (StackedTable) returns (ArrayResponse) {}
+  rpc Aggregate (AggregateRequest) returns (AggregateResponse) {}
+  rpc GetResults (GetResultsRequest) returns (StackedTable) {}
 }
 
-message ArrayRequest {
+
+
+message StackedTable {
     string doublename = 1;
     repeated double doublevalues = 2;
     string stringname = 3;
@@ -15,4 +19,16 @@ message ArrayRequest {
 
 message ArrayResponse {
   string message = 1;
+}
+
+message AggregateRequest {
+    repeated int32 ports = 1;
+}
+
+message AggregateResponse {
+    int32 return_code = 1;
+}
+
+message GetResultsRequest {
+    int32 which_results = 1;
 }
