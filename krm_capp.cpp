@@ -8,7 +8,7 @@
 
 #include "handshake.grpc.pb.h"
 
-ABSL_FLAG(std::string, target, "localhost:50051", "Server address");
+ABSL_FLAG(std::string, target, "d10h882.na.sas.com:50051", "Server address");
 
 using grpc::Channel;
 using grpc::ClientContext;
@@ -143,7 +143,7 @@ int main()
     std::vector<int> ports = { 50051, 50052, 50053, 50054};
     std::vector<std::string> server_addresses;
     for(auto p : ports)
-        server_addresses.emplace_back("localhost:" + std::to_string(p));
+        server_addresses.emplace_back("d10h882.na.sas.com:" + std::to_string(p));
     std::vector<HandShakeClient *> clients;
     // Vector to hold threads
     std::vector<std::thread> threads;

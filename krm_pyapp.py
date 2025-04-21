@@ -22,10 +22,16 @@ import handshake_pb2_grpc
 import pandas as pd
 import numpy as np
 import multiprocessing
+import time
 
 ports = [50051,50052,50053,50054]
 
 class HandShakeServer(handshake_pb2_grpc.HandShake):
+
+    def setPortId(self, port, id):
+        self.port = port
+        self.id = id
+
     def SendTable(self, request, context):
         dname: str = request.doublename
         dvals: np.array = np.array(request.doublevalues, dtype=np.float64)
@@ -51,12 +57,8 @@ class HandShakeServer(handshake_pb2_grpc.HandShake):
             coldata = svals[startidx:endidx]
             dc[colname] = coldata
         
-        # df = pd.DataFrame({dname: dvals, sname: svals})
         df = pd.DataFrame(dc)
         print(f"On {os.getpid()} received\n{df}")
-        # print(f"Received floating data array {request.doublename} with {len(request.doublevalues)} values on OS process {os.getpid()}.")
-        # print(f"Received character data array {request.stringname} with {len(request.stringvalues)} values on OS process {os.getpid()}.")
-        # Here, you could further process the array as needed
         return handshake_pb2.ArrayResponse(message="Array received successfully!")
 
     def Aggregate(self, request, context):
@@ -74,21 +76,25 @@ class HandShakeServer(handshake_pb2_grpc.HandShake):
             sname: str = otherThreadResults.stringname
             svals: np.array = np.array(otherThreadResults.stringvalues, dtype=str)
             df = pd.DataFrame({dname: dvals, sname: svals})
-            print(df)
+            print(df.round(2))
         return handshake_pb2.AggregateResponse(return_code=0)
     
     def GetResults(self, request, context):
-        response = handshake_pb2.StackedTable(doublename="Rocco",
-            doublevalues=[1.1,2.2,3.3],
-            stringname="Sameer", 
+        np.random.seed(0)
+        dvals = np.random.uniform(low=100,high=200, size=3)
+        response = handshake_pb2.StackedTable(doublename="Rocco"+str(self.id),
+            doublevalues=dvals,
+            stringname="Sameer"+str(self.id), 
             stringvalues=["IRBB","VAR","Net"])
         return response
 
 
-def serve(port:int=50051):
+def serve(port:int=50051, id: int=0):
     port = str(port)
     server = grpc.server(futures.ThreadPoolExecutor(max_workers=10))
-    handshake_pb2_grpc.add_HandShakeServicer_to_server(HandShakeServer(), server)
+    hs = HandShakeServer()
+    hs.setPortId(port, id)
+    handshake_pb2_grpc.add_HandShakeServicer_to_server(hs, server)
     server.add_insecure_port("[::]:" + port)
     server.start()
     print("Server started, listening on " + port)
@@ -98,8 +104,8 @@ def serve(port:int=50051):
 if __name__ == "__main__":
     logging.basicConfig()
     processes = []
-    for port in ports:
-        process = multiprocessing.Process(target=serve, args=(port,), name="Server1")
+    for idx, port in enumerate(ports):
+        process = multiprocessing.Process(target=serve, args=(port, idx), name="Server1")
         process.start()
         processes.append(process)
     for process in processes:
