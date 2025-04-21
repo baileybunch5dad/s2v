@@ -1,0 +1,13 @@
+pydantic
+pytest
+numpy
+typing
+matplotlib
+timing
+pandas
+logging
+pandas
+statsmodels
+grpcio
+grpcio-tools
+googleapis-common-protos

@@ -1,0 +1,15 @@
+syntax = "proto3";
+
+package handshake;
+
+service HandShake {
+  rpc SendArray (ArrayRequest) returns (ArrayResponse) {}
+}
+
+message ArrayRequest {
+  repeated double values = 1;
+}
+
+message ArrayResponse {
+  string message = 1;
+}
