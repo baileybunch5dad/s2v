@@ -24,10 +24,16 @@ class HandShakeClient {
       : stub_(HandShake::NewStub(channel)) {}
 
   
-  std::string SendArray(const std::vector<double>& v) {
+  std::string SendArray(const std::string& dnames, const std::vector<double>& dvals,
+  const std::string& snames, const std::vector<std::string>& svals) {
     ArrayRequest request;
-    for (int i = 0; i < 5000; ++i) {
-        request.add_values(static_cast<double>(i) / 10.0); // Example: i / 10.0
+    request.set_doublename(dnames);
+    for (auto dval : dvals) {
+        request.add_doublevalues(static_cast<double>(dval)); // Example: i / 10.0
+    }
+    request.set_stringname(snames);
+    for (auto sval : svals) {
+        request.add_stringvalues(sval); // Example: i / 10.0
     }
 
     // Call the SendArray RPC
@@ -52,7 +58,7 @@ class HandShakeClient {
 
 // Function to run a client in a separate thread
 void AsynchStreamDataToPython(HandShakeClient& handshakeClient) {
-    for(int i=0;i<100;i++) {
+    for(int i=0;i<10;i++) {
             // Generate 5000 random doubles
         std::vector<double> doubles;
         doubles.reserve(5000);
@@ -67,8 +73,18 @@ void AsynchStreamDataToPython(HandShakeClient& handshakeClient) {
             doubles.push_back(dis(gen));
         }
 
+    std::string dname = "DoubleHeader";
+    std::string sname = "StringHeader";
+        std::cout << "Generating 5000 strings..." << std::endl;
+        std::vector<std::string> strings;
+        strings.reserve(5000);
+        for(int i=0;i<5000;i++) {
+            strings.push_back(std::string("Number ") + std::to_string(i));
+        }
 
-    std::string reply = handshakeClient.SendArray(doubles);
+
+    std::string reply = handshakeClient.SendArray(dname,doubles,sname,strings);
+
     std::cout << "Client returned: " << reply << std::endl;
     }
 }

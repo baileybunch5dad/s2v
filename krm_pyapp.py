@@ -19,14 +19,22 @@ import os
 import grpc
 import handshake_pb2
 import handshake_pb2_grpc
-
+import pandas as pd
+import numpy as np
 import multiprocessing
 
 ports = [50051,50052]
 
 class HandShakeServer(handshake_pb2_grpc.HandShake):
     def SendArray(self, request, context):
-        print(f"Received array with {len(request.values)} values on OS process {os.getpid()}.")
+        dname: str = request.doublename
+        dvals: np.array = np.array(request.doublevalues, dtype=np.float64)
+        sname: str = request.stringname
+        svals: np.array = np.array(request.stringvalues, dtype=np.string_)
+        df = pd.DataFrame({dname: dvals, sname: svals})
+        print(f"On {os.getpid()} received\n{df}")
+        # print(f"Received floating data array {request.doublename} with {len(request.doublevalues)} values on OS process {os.getpid()}.")
+        # print(f"Received character data array {request.stringname} with {len(request.stringvalues)} values on OS process {os.getpid()}.")
         # Here, you could further process the array as needed
         return handshake_pb2.ArrayResponse(message="Array received successfully!")
 

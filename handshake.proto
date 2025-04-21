@@ -7,7 +7,10 @@ service HandShake {
 }
 
 message ArrayRequest {
-  repeated double values = 1;
+    string doublename = 1;
+    repeated double doublevalues = 2;
+    string stringname = 3;
+    repeated string stringvalues = 4;
 }
 
 message ArrayResponse {
