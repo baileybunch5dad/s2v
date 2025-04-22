@@ -22,12 +22,16 @@ import handshake_pb2_grpc
 import pandas as pd
 import numpy as np
 import multiprocessing
+import threading
 
 print("In Python, callback spawning listeners")
 
 ports = [50051,50052,50053,50054]
 
 class HandShakeServer(handshake_pb2_grpc.HandShake):
+
+    def __init__(self):
+        self.server_stop_event = threading.Event()
 
     def setPortId(self, port, id):
         self.port = port
@@ -88,6 +92,12 @@ class HandShakeServer(handshake_pb2_grpc.HandShake):
             stringname="Sameer"+str(self.id), 
             stringvalues=["IRBB","VAR","Net"])
         return response
+    
+    def Shutdown(self, request, context):
+        print("Shutdown RPC called. Terminating server.")
+        self.server_stop_event.set()  # Signal the server to stop
+        return handshake_pb2.ShutdownResponse(status="Server shutting down")
+
 
 
 def serve(port:int=50051, id: int=0):

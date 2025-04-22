@@ -15,11 +15,16 @@
 
 using grpc::Channel;
 using grpc::ClientContext;
+using grpc::Server;
+using grpc::ServerBuilder;
+using grpc::ServerContext;
 using grpc::Status;
 using handshake::AggregateRequest;
 using handshake::AggregateResponse;
 using handshake::ArrayResponse;
 using handshake::HandShake;
+using handshake::ShutdownRequest;
+using handshake::ShutdownResponse;
 using handshake::StackedTable;
 
 class HandShakeClient
@@ -27,6 +32,26 @@ class HandShakeClient
 public:
     HandShakeClient(std::shared_ptr<Channel> channel)
         : stub_(HandShake::NewStub(channel)) {}
+
+    std::string Shutdown()
+    {
+        ShutdownRequest request;
+        ShutdownResponse response;
+        grpc::ClientContext context;
+
+        grpc::Status status = stub_->Shutdown(&context, request, &response);
+
+        if (status.ok())
+        {
+            return response.status();
+        }
+        else
+        {
+            std::cout << status.error_code() << ": " << status.error_message()
+                      << std::endl;
+            return "RPC failed";
+        }
+    }
 
     std::string SendArray(const std::string &dnames, const std::vector<double> &dvals,
                           const std::string &snames, const std::vector<std::string> &svals)

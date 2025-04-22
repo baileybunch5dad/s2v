@@ -6,8 +6,14 @@ service HandShake {
   rpc SendTable (StackedTable) returns (ArrayResponse) {}
   rpc Aggregate (AggregateRequest) returns (AggregateResponse) {}
   rpc GetResults (GetResultsRequest) returns (StackedTable) {}
+  rpc Shutdown( ShutdownRequest) returns (ShutdownResponse) {}
 }
 
+message ShutdownRequest {}
+
+message ShutdownResponse {
+    string status = 1;
+}
 
 
 message StackedTable {
