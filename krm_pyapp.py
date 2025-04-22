@@ -34,9 +34,10 @@ class HandShakeServer(handshake_pb2_grpc.HandShakeServicer):
     #     self.server = server
         # self.logger = logging.getLogger('HandShakeService')
 
-    def setPortId(self, port, id):
+    def setPortIdServer(self, port, id, server):
         self.port = port
         self.id = id
+        self.server = server
 
     def SendTable(self, request, context):
         dname: str = request.doublename
@@ -102,10 +103,10 @@ class HandShakeServer(handshake_pb2_grpc.HandShakeServicer):
     
     def Shutdown(self, request, context):
         print(f"Shutdown RPC called. Post message to terminate server.  {self.port=}")
-        # shutdown_thread = threading.Thread(target=self._shutdown, args=())
-        # shutdown_thread.daemon = True
-        # shutdown_thread.start()
-        # print(f"Daemon thread started, returning.  {self.port=}")
+        shutdown_thread = threading.Thread(target=self._shutdown, args=())
+        shutdown_thread.daemon = True
+        shutdown_thread.start()
+        print(f"Daemon thread started, returning.  {self.port=}")
         return handshake_pb2.ShutdownResponse(status=f"Server shutting down {self.port=}")
 
     def _shutdown(self):
@@ -117,7 +118,7 @@ def serve(port:int=50051, id: int=0):
     port = str(port)
     server = grpc.server(futures.ThreadPoolExecutor(max_workers=10))
     hs = HandShakeServer()
-    hs.setPortId(port, id)
+    hs.setPortIdServer(port, id, server)
     handshake_pb2_grpc.add_HandShakeServicer_to_server(hs, server)
     server.add_insecure_port("[::]:" + port)
     server.start()

@@ -315,9 +315,9 @@ int main(int argc, char **argv)
     clients[0]->Aggregate(ports);
     std::cout << "Thread aggregation finished" << std::endl;
 
-    // for(auto client : clients) {
-    //     client->Shutdown();
-    // }
+    for(auto client : clients) {
+        client->Shutdown();
+    }
 
     // Join all threads
     for (auto &thread : threads)
