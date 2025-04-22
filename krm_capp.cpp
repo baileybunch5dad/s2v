@@ -26,6 +26,8 @@ using handshake::HandShake;
 using handshake::ShutdownRequest;
 using handshake::ShutdownResponse;
 using handshake::StackedTable;
+using handshake::HelloRequest;
+using handshake::HelloResponse;
 
 class HandShakeClient
 {
@@ -44,6 +46,35 @@ public:
         if (status.ok())
         {
             return response.status();
+        }
+        else
+        {
+            std::cout << status.error_code() << ": " << status.error_message()
+                      << std::endl;
+            return "RPC failed";
+        }
+    }
+
+    std::string Hello(std::string instr)
+    {
+        HelloRequest request;
+        HelloResponse response;
+        grpc::ClientContext context;
+
+        // sleep(2); // for first message give server a chance to launch threads and processes
+        // context.set_wait_for_ready(true);
+
+        // // Optionally, set a deadline to avoid waiting indefinitely
+        // std::chrono::system_clock::time_point deadline = std::chrono::system_clock::now() + std::chrono::seconds(5); 
+        // context.set_deadline(deadline);
+        // request.set_message(instr);
+        std::cout << "invoke Hello(" << instr << ")" << std::endl;
+        request.set_name(instr.c_str());
+        grpc::Status status = stub_->Hello(&context, request, &response);
+        std::cout << "Status ok " << status.ok() << std::endl;
+        if (status.ok())
+        {
+            return response.reply();
         }
         else
         {
@@ -155,9 +186,18 @@ void AsynchStreamDataToPython(HandShakeClient *handshakeClient)
     }
 }
 
+void TestClient(HandShakeClient* client, const std::string& client_name) {
+    std::string tmstr = client->Hello(client_name);
+    if(std::strncmp(tmstr.c_str(), "RPC failed", 10) == 0) {
+        std::cerr << "Aborting, cannot invoke remote procedure calls" << std::endl;
+        exit(1);
+    }
+}
+
 // void RunClient(const std::string& server_address, const std::string& client_name) {
 void RunClient(HandShakeClient *client, const std::string &client_name)
 {
+
     // Create a gRPC client and connect to the given server address
     // HandShakeClient client(grpc::CreateChannel(server_address, grpc::InsecureChannelCredentials()));
     AsynchStreamDataToPython(client);
@@ -179,11 +219,32 @@ int startPythonProcess(std::string pyfname)
     Py_Finalize();
     return 0;
 }
+
+void WaitForChannelReady(const std::shared_ptr<Channel>& channel, int max_attempts = 10, int delay_ms = 500) {
+    for (int i = 0; i < max_attempts; ++i) {
+        // Get the current channel state
+        auto state = channel->GetState(true);
+
+        // Check if the channel is ready
+        if (state == GRPC_CHANNEL_READY) {
+            std::cout << "Channel is ready!" << std::endl;
+            return;
+        } else {
+            std::cout << "Waiting for channel to be ready. Current state: " << state << std::endl;
+        }
+
+        // Sleep for the specified delay
+        std::this_thread::sleep_for(std::chrono::milliseconds(delay_ms));
+    }
+
+    std::cerr << "Channel did not become ready within the timeout period." << std::endl;
+}
+
+
 int main(int argc, char **argv)
 {
     std::string server = "localhost";
     bool inprocessPython = false;
-    std::thread thrd = {};
 
     for (int i = 1; i < argc; i++)
     {
@@ -198,10 +259,11 @@ int main(int argc, char **argv)
         }
     }
     std::cout << "Server " << server << std::endl;
+    std::thread pythrd = {};
     if (inprocessPython)
     {
         std::cout << "Launching inprocess Python";
-        thrd = std::thread(startPythonProcess, "krm_pyapp.py");
+        pythrd = std::thread(startPythonProcess, "krm_pyapp.py");
         sleep(1);
     }
     else
@@ -222,19 +284,53 @@ int main(int argc, char **argv)
     // Launch threads for each server
     for (size_t i = 0; i < server_addresses.size(); ++i)
     {
-        HandShakeClient *client = new HandShakeClient(grpc::CreateChannel(server_addresses[i], grpc::InsecureChannelCredentials()));
+        std::string addr = server_addresses[i];
+        std::cout << "Creating channel for " << addr << std::endl;
+        auto channel = grpc::CreateChannel(addr, grpc::InsecureChannelCredentials());
+        WaitForChannelReady(channel);
+        HandShakeClient *client = new HandShakeClient(channel);
         clients.emplace_back(client);
-        threads.emplace_back(RunClient, client, "Client" + std::to_string(i + 1));
     }
+
+    // std::cout << "Wait for socket binding" << std::endl; 
+
+    // std::this_thread::sleep_for(std::chrono::milliseconds(2000)); // ms
+    
+    for (size_t i = 0; i < server_addresses.size(); ++i) {
+        auto client = clients[i];
+        std::string client_name = "Client" + std::to_string(i + 1);
+        TestClient(client, client_name);
+    }
+
+
+    for (size_t i = 0; i < server_addresses.size(); ++i) {
+        auto client = clients[i];
+        std::string client_name = "Client" + std::to_string(i + 1);
+        threads.emplace_back(RunClient, client, client_name);
+    }
+
+
+
+    std::cout << "Everything worked multi-threaded, now aggregate with threads" << std::endl;
+    clients[0]->Aggregate(ports);
+    std::cout << "Thread aggregation finished" << std::endl;
+
+    // for(auto client : clients) {
+    //     client->Shutdown();
+    // }
 
     // Join all threads
     for (auto &thread : threads)
     {
-        thread.join();
+        if(thread.joinable())
+            thread.join();
     }
-    std::cout << "Everything worked multi-threaded, now aggregate with threads" << std::endl;
-    clients[0]->Aggregate(ports);
-    std::cout << "Thread aggregation finished" << std::endl;
+
+    if(pythrd.joinable()) {
+        pythrd.join();
+    }
+
+    exit(0);
 
     return 0;
 }

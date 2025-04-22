@@ -14,7 +14,7 @@
 """The Python implementation of the GRPC helloworld.Greeter server."""
 
 from concurrent import futures
-import logging
+# import logging
 import os
 import grpc
 import handshake_pb2
@@ -23,15 +23,16 @@ import pandas as pd
 import numpy as np
 import multiprocessing
 import threading
-
-print("In Python, callback spawning listeners")
+import time
+import sys
 
 ports = [50051,50052,50053,50054]
 
-class HandShakeServer(handshake_pb2_grpc.HandShake):
+class HandShakeServer(handshake_pb2_grpc.HandShakeServicer):
 
-    def __init__(self):
-        self.server_stop_event = threading.Event()
+    # def __init__(self, server):
+    #     self.server = server
+        # self.logger = logging.getLogger('HandShakeService')
 
     def setPortId(self, port, id):
         self.port = port
@@ -84,6 +85,12 @@ class HandShakeServer(handshake_pb2_grpc.HandShake):
             print(df.round(2))
         return handshake_pb2.AggregateResponse(return_code=0)
     
+    def Hello(self, request, context):
+        instr = str(request.name)
+        print(f"Hello from TestMethod, received {instr}  {os.getpid()=} ")
+        outstr = instr + " and back "
+        return handshake_pb2.HelloResponse(reply=outstr)
+
     def GetResults(self, request, context):
         np.random.seed(0)
         dvals = np.random.uniform(low=100,high=200, size=3)
@@ -94,11 +101,17 @@ class HandShakeServer(handshake_pb2_grpc.HandShake):
         return response
     
     def Shutdown(self, request, context):
-        print("Shutdown RPC called. Terminating server.")
-        self.server_stop_event.set()  # Signal the server to stop
-        return handshake_pb2.ShutdownResponse(status="Server shutting down")
+        print(f"Shutdown RPC called. Post message to terminate server.  {self.port=}")
+        # shutdown_thread = threading.Thread(target=self._shutdown, args=())
+        # shutdown_thread.daemon = True
+        # shutdown_thread.start()
+        # print(f"Daemon thread started, returning.  {self.port=}")
+        return handshake_pb2.ShutdownResponse(status=f"Server shutting down {self.port=}")
 
-
+    def _shutdown(self):
+        time.sleep(1)  # Brief delay to allow response to be sent
+        self.server.stop(grace=3)
+        # sys.exit(0)
 
 def serve(port:int=50051, id: int=0):
     port = str(port)
@@ -108,15 +121,20 @@ def serve(port:int=50051, id: int=0):
     handshake_pb2_grpc.add_HandShakeServicer_to_server(hs, server)
     server.add_insecure_port("[::]:" + port)
     server.start()
-    print("Server started, listening on " + port)
+    print(f"Server started, listening on {port} from {os.getpid()=}")
     server.wait_for_termination()
+    # print("Waiting on stop event")
+    # server_servicer = server._state.generic_handlers[0].service.servicer
+    # server_servicer.server_stop_event.wait()
+    # print("Stop event recieved, stopping")
+    # server.stop(0)
 
 
 if __name__ == "__main__":
-    logging.basicConfig()
+    # logging.basicConfig( level=logging.INFO)
     processes = []
     for idx, port in enumerate(ports):
-        process = multiprocessing.Process(target=serve, args=(port, idx), name="Server1")
+        process = multiprocessing.Process(target=serve, args=(port, idx), name="Server"+str(idx))
         process.start()
         processes.append(process)
     for process in processes:

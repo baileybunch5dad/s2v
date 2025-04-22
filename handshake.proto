@@ -7,8 +7,17 @@ service HandShake {
   rpc Aggregate (AggregateRequest) returns (AggregateResponse) {}
   rpc GetResults (GetResultsRequest) returns (StackedTable) {}
   rpc Shutdown( ShutdownRequest) returns (ShutdownResponse) {}
+  rpc Hello (HelloRequest) returns (HelloResponse) {}  
 }
 
+message HelloRequest {
+  string name = 1;
+}
+
+message HelloResponse {
+  string reply = 1;
+}
+  
 message ShutdownRequest {}
 
 message ShutdownResponse {
