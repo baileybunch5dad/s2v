@@ -15,7 +15,7 @@ handshake.grpc.pb.o: handshake.grpc.pb.cc
 	g++ -std=c++17 -I/home/chris/.local/include  -pthread -c *.cc
 
 krm_capp.o: krm_capp.cpp handshake.grpc.pb.cc
-	g++ -std=c++17 -I/home/chris/.local/include  -pthread -c krm_capp.cpp
+	g++ -std=c++17 -I/home/chris/.local/include  `python3.11-config --embed --cflags` -pthread -c krm_capp.cpp
 
 krm_capp: krm_capp.o  handshake.grpc.pb.o
 	g++ krm_capp.o handshake.grpc.pb.o handshake.pb.o -o krm_capp \
@@ -123,4 +123,5 @@ krm_capp: krm_capp.o  handshake.grpc.pb.o
 	/home/chris/.local/lib64/libabsl_demangle_internal.a  \
 	/home/chris/.local/lib64/libabsl_demangle_rust.a  \
 	/home/chris/.local/lib64/libabsl_decode_rust_punycode.a  \
-	/home/chris/.local/lib64/libabsl_utf8_for_code_point.a 
+	/home/chris/.local/lib64/libabsl_utf8_for_code_point.a \
+	`python3.11-config --ldflags --embed`

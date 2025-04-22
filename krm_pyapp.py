@@ -22,7 +22,8 @@ import handshake_pb2_grpc
 import pandas as pd
 import numpy as np
 import multiprocessing
-import time
+
+print("In Python, callback spawning listeners")
 
 ports = [50051,50052,50053,50054]
 

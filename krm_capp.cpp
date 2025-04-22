@@ -1,3 +1,4 @@
+#include <Python.h>
 #include <grpcpp/grpcpp.h>
 #include <iostream>
 #include <memory>
@@ -8,16 +9,18 @@
 
 #include "handshake.grpc.pb.h"
 
-ABSL_FLAG(std::string, target, "d10h882.na.sas.com:50051", "Server address");
+// const std::string server="cldlgn01.unx.sas.com";
+
+// ABSL_FLAG(std::string, target, server + ":" + "50051", "Server address");
 
 using grpc::Channel;
 using grpc::ClientContext;
 using grpc::Status;
-using handshake::StackedTable;
-using handshake::ArrayResponse;
 using handshake::AggregateRequest;
 using handshake::AggregateResponse;
+using handshake::ArrayResponse;
 using handshake::HandShake;
+using handshake::StackedTable;
 
 class HandShakeClient
 {
@@ -55,7 +58,6 @@ public:
             std::cout << status.error_code() << ": " << status.error_message()
                       << std::endl;
             return "RPC failed";
-            
         }
     }
 
@@ -67,7 +69,7 @@ public:
             request.add_ports(p);
         }
 
-        //Call the Aggregate RPC
+        // Call the Aggregate RPC
         AggregateResponse response;
         ClientContext context;
         Status status = stub_->Aggregate(&context, request, &response);
@@ -92,7 +94,7 @@ private:
 // Function to run a client in a separate thread
 void AsynchStreamDataToPython(HandShakeClient *handshakeClient)
 {
-    for (int i = 0; i < 10; i++)
+    for (int i = 0; i < 1; i++)
     {
         // Generate 5000 random doubles
         std::vector<double> doubles;
@@ -136,14 +138,58 @@ void RunClient(HandShakeClient *client, const std::string &client_name)
     AsynchStreamDataToPython(client);
 }
 
-int main()
+int startPythonProcess(std::string pyfname)
 {
+    Py_Initialize();
+    PyRun_SimpleString("import sys");
+    PyRun_SimpleString("sys.path.append('.')");
+    FILE *py_file = fopen(pyfname.c_str(), "r");
+    if (!py_file)
+    {
+        std::cerr << "Error: Could not open Python script " << pyfname << std::endl;
+        return 1;
+    }
+    std::cout << "C++ Launching embedded Python" << std::endl;
+    PyRun_SimpleFile(py_file, pyfname.c_str());
+    Py_Finalize();
+    return 0;
+}
+int main(int argc, char **argv)
+{
+    std::string server = "localhost";
+    bool inprocessPython = false;
+    std::thread thrd = {};
+
+    for (int i = 1; i < argc; i++)
+    {
+        std::string s = argv[i];
+        if (std::strncmp(s.c_str(), "--server", 8) == 0)
+        {
+            server = s.substr(9);
+        }
+        if (std::strncmp(s.c_str(), "--embedded", 10) == 0)
+        {
+            inprocessPython = true;
+        }
+    }
+    std::cout << "Server " << server << std::endl;
+    if (inprocessPython)
+    {
+        std::cout << "Launching inprocess Python";
+        thrd = std::thread(startPythonProcess, "krm_pyapp.py");
+        sleep(1);
+    }
+    else
+    {
+        std::cout << "Attaching to remote out of process aggregation server " << std::endl;
+    }
+
     std::cout << "Starting multi-threaded C++ krm_capp talking to multiprocess krm_pyapp" << std::endl;
     // List of server addresses
-    std::vector<int> ports = { 50051, 50052, 50053, 50054};
+    std::vector<int> ports = {50051, 50052, 50053, 50054};
     std::vector<std::string> server_addresses;
-    for(auto p : ports)
-        server_addresses.emplace_back("d10h882.na.sas.com:" + std::to_string(p));
+    for (auto p : ports)
+        server_addresses.emplace_back(server + ":" + std::to_string(p));
     std::vector<HandShakeClient *> clients;
     // Vector to hold threads
     std::vector<std::thread> threads;
@@ -167,4 +213,3 @@ int main()
 
     return 0;
 }
-
