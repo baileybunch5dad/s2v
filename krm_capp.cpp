@@ -19,15 +19,17 @@ using grpc::Server;
 using grpc::ServerBuilder;
 using grpc::ServerContext;
 using grpc::Status;
-using handshake::AggregateRequest;
-using handshake::AggregateResponse;
+using handshake::AggregateGlobalRequest;
+using handshake::AggregateGlobalResponse;
+using handshake::AggregateLocalRequest;
+using handshake::AggregateLocalResponse;
 using handshake::ArrayResponse;
 using handshake::HandShake;
+using handshake::HelloRequest;
+using handshake::HelloResponse;
 using handshake::ShutdownRequest;
 using handshake::ShutdownResponse;
 using handshake::StackedTable;
-using handshake::HelloRequest;
-using handshake::HelloResponse;
 
 class HandShakeClient
 {
@@ -65,7 +67,7 @@ public:
         // context.set_wait_for_ready(true);
 
         // // Optionally, set a deadline to avoid waiting indefinitely
-        // std::chrono::system_clock::time_point deadline = std::chrono::system_clock::now() + std::chrono::seconds(5); 
+        // std::chrono::system_clock::time_point deadline = std::chrono::system_clock::now() + std::chrono::seconds(5);
         // context.set_deadline(deadline);
         // request.set_message(instr);
         std::cout << "invoke Hello(" << instr << ")" << std::endl;
@@ -117,18 +119,48 @@ public:
         }
     }
 
-    int Aggregate(const std::vector<int> &ports)
+    int AggregateLocal(const std::vector<int> &ports)
     {
-        AggregateRequest request;
+        AggregateLocalRequest request;
         for (auto p : ports)
         {
             request.add_ports(p);
         }
 
         // Call the Aggregate RPC
-        AggregateResponse response;
+        AggregateLocalResponse response;
         ClientContext context;
-        Status status = stub_->Aggregate(&context, request, &response);
+        Status status = stub_->AggregateLocal(&context, request, &response);
+
+        // Handle the response
+        if (status.ok())
+        {
+            return response.return_code();
+        }
+        else
+        {
+            std::cout << status.error_code() << ": " << status.error_message()
+                      << std::endl;
+            return (-1);
+        }
+    }
+
+    int AggregateGlobal(const std::vector<int> &ports, const std::vector<std::string> &servers)
+    {
+        AggregateGlobalRequest request;
+        for (int p : ports)
+        {
+            request.add_ports(p);
+        }
+        for (std::string s : servers)
+        {
+            request.add_servers(s);
+        }
+
+        // Call the Aggregate RPC
+        AggregateGlobalResponse response;
+        ClientContext context;
+        Status status = stub_->AggregateGlobal(&context, request, &response);
 
         // Handle the response
         if (status.ok())
@@ -174,10 +206,11 @@ void AsynchStreamDataToPython(HandShakeClient *handshakeClient)
         std::string sname = "txn_id scenario product_id load_id run_id";
         std::cout << "Generating 5000 strings..." << std::endl;
         std::vector<std::string> strings;
+        std::string choices[] = {"Broccoli", "Tomato", "Kiwi", "Kale", "Tomatillo"};
         strings.reserve(5000);
         for (int i = 0; i < 5000; i++)
         {
-            strings.push_back(std::string("Number ") + std::to_string(i));
+            strings.push_back(choices[std::rand() % 5]);
         }
 
         std::string reply = handshakeClient->SendArray(dname, doubles, sname, strings);
@@ -186,9 +219,11 @@ void AsynchStreamDataToPython(HandShakeClient *handshakeClient)
     }
 }
 
-void TestClient(HandShakeClient* client, const std::string& client_name) {
+void TestClient(HandShakeClient *client, const std::string &client_name)
+{
     std::string tmstr = client->Hello(client_name);
-    if(std::strncmp(tmstr.c_str(), "RPC failed", 10) == 0) {
+    if (std::strncmp(tmstr.c_str(), "RPC failed", 10) == 0)
+    {
         std::cerr << "Aborting, cannot invoke remote procedure calls" << std::endl;
         exit(1);
     }
@@ -203,33 +238,21 @@ void RunClient(HandShakeClient *client, const std::string &client_name)
     AsynchStreamDataToPython(client);
 }
 
-int startPythonProcess(std::string pyfname)
+void WaitForChannelReady(const std::shared_ptr<Channel> &channel, int max_attempts = 10, int delay_ms = 500)
 {
-    Py_Initialize();
-    PyRun_SimpleString("import sys");
-    PyRun_SimpleString("sys.path.append('.')");
-    FILE *py_file = fopen(pyfname.c_str(), "r");
-    if (!py_file)
+    for (int i = 0; i < max_attempts; ++i)
     {
-        std::cerr << "Error: Could not open Python script " << pyfname << std::endl;
-        return 1;
-    }
-    std::cout << "C++ Launching embedded Python" << std::endl;
-    PyRun_SimpleFile(py_file, pyfname.c_str());
-    Py_Finalize();
-    return 0;
-}
-
-void WaitForChannelReady(const std::shared_ptr<Channel>& channel, int max_attempts = 10, int delay_ms = 500) {
-    for (int i = 0; i < max_attempts; ++i) {
         // Get the current channel state
         auto state = channel->GetState(true);
 
         // Check if the channel is ready
-        if (state == GRPC_CHANNEL_READY) {
+        if (state == GRPC_CHANNEL_READY)
+        {
             std::cout << "Channel is ready!" << std::endl;
             return;
-        } else {
+        }
+        else
+        {
             std::cout << "Waiting for channel to be ready. Current state: " << state << std::endl;
         }
 
@@ -240,11 +263,94 @@ void WaitForChannelReady(const std::shared_ptr<Channel>& channel, int max_attemp
     std::cerr << "Channel did not become ready within the timeout period." << std::endl;
 }
 
+std::vector<int> stringToArrayOfInts(const std::string &inputString)
+{
+    std::vector<int> intArray;
+    std::stringstream ss(inputString);
+    std::string token;
+
+    while (std::getline(ss, token, ','))
+    {
+        token.erase(std::remove_if(token.begin(), token.end(), ::isspace), token.end());
+        try
+        {
+            intArray.push_back(std::stoi(token));
+        }
+        catch (const std::invalid_argument &ia)
+        {
+            std::cerr << "Invalid argument: " << ia.what() << " for token: " << token << std::endl;
+        }
+        catch (const std::out_of_range &oor)
+        {
+            std::cerr << "Out of range error: " << oor.what() << " for token: " << token << std::endl;
+        }
+    }
+    return intArray;
+}
+
+std::string to_comma_separated_string(const std::vector<int> &arr)
+{
+    if (arr.empty())
+    {
+        return "";
+    }
+
+    std::stringstream ss;
+    std::for_each(arr.begin(), arr.end() - 1, [&](int x)
+                  { ss << x << ","; });
+    ss << arr.back();
+    return ss.str();
+}
+
+std::vector<std::string> stringToVector(const std::string &str)
+{
+    std::vector<std::string> result;
+    std::stringstream ss(str);
+    std::string token;
+
+    while (std::getline(ss, token, ','))
+    {
+        result.push_back(token);
+    }
+    return result;
+}
+
+int startPythonProcess(std::string pyfname, int argc, char **argv, std::vector<int> ports)
+{
+    Py_Initialize();
+
+    // Prepare arguments for Python
+    std::vector<wchar_t *> wargv(argc);
+    for (int i = 0; i < argc; ++i)
+    {
+        size_t size = mbstowcs(nullptr, argv[i], 0) + 1;
+        wargv[i] = new wchar_t[size];
+        mbstowcs(wargv[i], argv[i], size);
+    }
+
+    // Set sys.argv
+    PySys_SetArgv(argc, wargv.data());
+    PyRun_SimpleString("import sys");
+    PyRun_SimpleString("sys.path.append('.')");
+
+    FILE *py_file = fopen(pyfname.c_str(), "r");
+    if (!py_file)
+    {
+        std::cerr << "Error: Could not open Python script " << pyfname << std::endl;
+        exit(1);
+    }
+    std::cout << "C++ Launching embedded Python" << std::endl;
+    PyRun_SimpleFile(py_file, pyfname.c_str());
+    Py_Finalize();
+    return 0;
+}
 
 int main(int argc, char **argv)
 {
     std::string server = "localhost";
     bool inprocessPython = false;
+    std::vector<int> ports = {50051, 50052, 50053, 50054};
+    std::vector<std::string> externalServers = {};
 
     for (int i = 1; i < argc; i++)
     {
@@ -257,13 +363,27 @@ int main(int argc, char **argv)
         {
             inprocessPython = true;
         }
+        if (std::strncmp(s.c_str(), "--ports", 7) == 0)
+        {
+            ports = stringToArrayOfInts(s.substr(8));
+        }
+        if (std::strncmp(s.c_str(), "--externalServers", 17) == 0)
+        {
+            externalServers = stringToVector(s.substr(18));
+        }
     }
+    std::cout << "Ports ";
+    for (auto p : ports)
+    {
+        std::cout << p << " ";
+    }
+    std::cout << std::endl;
     std::cout << "Server " << server << std::endl;
     std::thread pythrd = {};
     if (inprocessPython)
     {
         std::cout << "Launching inprocess Python";
-        pythrd = std::thread(startPythonProcess, "krm_pyapp.py");
+        pythrd = std::thread(startPythonProcess, "krm_pyapp.py", argc, argv, ports);
         sleep(1);
     }
     else
@@ -273,7 +393,6 @@ int main(int argc, char **argv)
 
     std::cout << "Starting multi-threaded C++ krm_capp talking to multiprocess krm_pyapp" << std::endl;
     // List of server addresses
-    std::vector<int> ports = {50051, 50052, 50053, 50054};
     std::vector<std::string> server_addresses;
     for (auto p : ports)
         server_addresses.emplace_back(server + ":" + std::to_string(p));
@@ -292,41 +411,47 @@ int main(int argc, char **argv)
         clients.emplace_back(client);
     }
 
-    // std::cout << "Wait for socket binding" << std::endl; 
+    // std::cout << "Wait for socket binding" << std::endl;
 
     // std::this_thread::sleep_for(std::chrono::milliseconds(2000)); // ms
-    
-    for (size_t i = 0; i < server_addresses.size(); ++i) {
+
+    for (size_t i = 0; i < server_addresses.size(); ++i)
+    {
         auto client = clients[i];
         std::string client_name = "Client" + std::to_string(i + 1);
         TestClient(client, client_name);
     }
 
-
-    for (size_t i = 0; i < server_addresses.size(); ++i) {
+    for (size_t i = 0; i < server_addresses.size(); ++i)
+    {
         auto client = clients[i];
         std::string client_name = "Client" + std::to_string(i + 1);
         threads.emplace_back(RunClient, client, client_name);
     }
 
-
-
-    std::cout << "Everything worked multi-threaded, now aggregate with threads" << std::endl;
-    clients[0]->Aggregate(ports);
-    std::cout << "Thread aggregation finished" << std::endl;
-
-    for(auto client : clients) {
-        client->Shutdown();
-    }
-
-    // Join all threads
+    // Join all threads, letting the asynch threads flood the python listeners
     for (auto &thread : threads)
     {
-        if(thread.joinable())
+        if (thread.joinable())
             thread.join();
     }
+    std::cout << "Everything worked multi-threaded, now aggregate with threads" << std::endl;
+    clients[0]->AggregateLocal(ports);
+    std::cout << "Local aggregation complete" << std::endl;
+    if (externalServers.size() > 0)
+    {
+        std::cout << "Aggregating across external servers" << std::endl;
+        clients[0]->AggregateGlobal(ports, externalServers);
+    }
+    std::cout << "Aggregation finished" << std::endl;
 
-    if(pythrd.joinable()) {
+    // for (auto client : clients)
+    // {
+    //     client->Shutdown();
+    // }
+
+    if (pythrd.joinable())
+    {
         pythrd.join();
     }
 

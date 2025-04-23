@@ -4,7 +4,8 @@ package handshake;
 
 service HandShake {
   rpc SendTable (StackedTable) returns (ArrayResponse) {}
-  rpc Aggregate (AggregateRequest) returns (AggregateResponse) {}
+  rpc AggregateLocal (AggregateLocalRequest) returns (AggregateLocalResponse) {}
+  rpc AggregateGlobal (AggregateGlobalRequest) returns (AggregateGlobalResponse) {}
   rpc GetResults (GetResultsRequest) returns (StackedTable) {}
   rpc Shutdown( ShutdownRequest) returns (ShutdownResponse) {}
   rpc Hello (HelloRequest) returns (HelloResponse) {}  
@@ -36,12 +37,21 @@ message ArrayResponse {
   string message = 1;
 }
 
-message AggregateRequest {
-    repeated int32 ports = 1;
+message AggregateLocalRequest {
+  repeated int32 ports = 1;
 }
 
-message AggregateResponse {
-    int32 return_code = 1;
+message AggregateLocalResponse {
+  int32 return_code = 1;
+}
+
+message AggregateGlobalRequest {
+  repeated int32 ports = 1;
+  repeated string servers = 2;
+}
+
+message AggregateGlobalResponse {
+  int32 return_code = 1;
 }
 
 message GetResultsRequest {
