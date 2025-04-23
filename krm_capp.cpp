@@ -345,31 +345,45 @@ int startPythonProcess(std::string pyfname, int argc, char **argv, std::vector<i
     return 0;
 }
 
+bool startswith(const std::string &s, const std::string &prfix)
+{
+    return (std::strncmp(s.c_str(), prfix.c_str(), prfix.size()) == 0);
+}
+std::string parmval(const std::string &s, const std::string &prfix)
+{
+    return s.substr(prfix.size() + 1);
+}
 int main(int argc, char **argv)
 {
     std::string server = "localhost";
     bool inprocessPython = false;
     std::vector<int> ports = {50051, 50052, 50053, 50054};
     std::vector<std::string> externalServers = {};
+    bool shutdown = false;
 
     for (int i = 1; i < argc; i++)
     {
         std::string s = argv[i];
-        if (std::strncmp(s.c_str(), "--server", 8) == 0)
+        std::string o = "--server";
+        if (startswith(s,"--server") )
         {
-            server = s.substr(9);
+            server = parmval(s,"--server");
         }
-        if (std::strncmp(s.c_str(), "--embedded", 10) == 0)
+        if (startswith(s,"--embedded"))
         {
             inprocessPython = true;
         }
-        if (std::strncmp(s.c_str(), "--ports", 7) == 0)
+        if (startswith(s,"--ports")) 
         {
-            ports = stringToArrayOfInts(s.substr(8));
+            ports = stringToArrayOfInts(parmval(s, "--ports"));
         }
-        if (std::strncmp(s.c_str(), "--externalServers", 17) == 0)
+        if (startswith(s, "--externalServers"))
         {
-            externalServers = stringToVector(s.substr(18));
+            externalServers = stringToVector(parmval(s, "--externalServers"));
+        }
+        if (startswith(s,"--shutdown"))
+        {
+            shutdown = true;
         }
     }
     std::cout << "Ports ";
@@ -445,10 +459,13 @@ int main(int argc, char **argv)
     }
     std::cout << "Aggregation finished" << std::endl;
 
-    // for (auto client : clients)
-    // {
-    //     client->Shutdown();
-    // }
+    if (shutdown)
+    {
+        for (auto client : clients)
+        {
+            client->Shutdown();
+        }
+    }
 
     if (pythrd.joinable())
     {
