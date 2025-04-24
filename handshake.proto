@@ -9,6 +9,11 @@ service HandShake {
   rpc GetResults (GetResultsRequest) returns (StackedTable) {}
   rpc Shutdown( ShutdownRequest) returns (ShutdownResponse) {}
   rpc Hello (HelloRequest) returns (HelloResponse) {}  
+  rpc SendDataFrame(DataFrame) returns (StringResponse) {}
+}
+
+message StringResponse {
+  string str = 1;
 }
 
 message HelloRequest {
@@ -56,4 +61,51 @@ message AggregateGlobalResponse {
 
 message GetResultsRequest {
     int32 which_results = 1;
+}
+
+
+message DataFrame {
+  repeated Column columns = 1;
+  int64 index_count = 2; // Number of rows
+}
+
+message Column {
+  string name = 1;
+  DataType data_type = 2;
+  oneof data_values {
+    ValuesString string_values = 3;
+    ValuesInt64 int64_values = 4;
+    ValuesFloat float_values = 5;
+    ValuesBool bool_values = 6;
+    ValuesDouble double_values = 7;
+  }
+}
+
+enum DataType {
+  STRING = 0;
+  INT64 = 1;
+  FLOAT = 2;
+  BOOL = 3;
+  DOUBLE = 4;
+  DATE = 5;
+}
+
+message ValuesString {
+  repeated string values = 1;
+}
+
+message ValuesInt64 {
+  repeated int64 values = 1;
+}
+
+message ValuesFloat {
+  repeated float values = 1;
+}
+
+message ValuesBool {
+  repeated bool values = 1;
+}
+
+message ValuesDouble{
+    repeated double values = 1;
 }

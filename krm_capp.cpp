@@ -30,6 +30,9 @@ using handshake::HelloResponse;
 using handshake::ShutdownRequest;
 using handshake::ShutdownResponse;
 using handshake::StackedTable;
+using handshake::DataFrame;
+using handshake::StringResponse;
+using handshake::Column;
 
 class HandShakeClient
 {
@@ -58,6 +61,38 @@ public:
         }
     }
 
+    std::string SendDataFrame() 
+    {
+        handshake::DataFrame request;
+        StringResponse response;
+        grpc::ClientContext context;
+
+        auto *col1 = request.add_columns();
+        col1->set_name("Col1Str");
+        auto svalptr = col1->mutable_string_values();
+        svalptr->add_values("hello");
+        svalptr->add_values("there");
+        auto *col2 = request.add_columns();
+        col2->set_name("Col2Num");
+        auto dvalptr = col2->mutable_double_values();
+        dvalptr->add_values(3.1415);
+        dvalptr->add_values(2.7182818);
+
+
+        grpc::Status status = stub_->SendDataFrame(&context, request, &response);
+
+        if (status.ok())
+        {
+            return response.str();
+        }
+        else
+        {
+            std::cout << "SendDataFrame" << std::endl;
+            std::cout << status.error_code() << ": " << status.error_message()
+                      << std::endl;
+            return "RPC failed";
+        }
+    }
     std::string Hello(std::string instr)
     {
         HelloRequest request;
@@ -484,6 +519,8 @@ int main(int argc, char **argv)
     std::cout << "Global aggregation across servers commencing" << std::endl;
     clients[0]->AggregateGlobal(ports, externalServers);
     std::cout << "Aggregation finished" << std::endl;
+
+    clients[0]->SendDataFrame();
 
     if (shutdown)
     {

@@ -27,6 +27,7 @@ import time
 import sys
 from DynamicDist import DynamicDist
 
+ports = [50051,50052,50053,50054]
 if len(sys.argv) > 1:
     for i, arg in enumerate(sys.argv):
         print(f"Argument {i}: {arg}")
@@ -35,7 +36,6 @@ if len(sys.argv) > 1:
             ports = list(map(int, portstr.split(',')))
 else:
     print("No arguments provided.")
-    ports = [50051,50052,50053,50054]
 
 print(f"Using ports {ports}")
 
@@ -140,6 +140,26 @@ class HandShakeServer(handshake_pb2_grpc.HandShakeServicer):
         else:
             print('Thread 0 aggregating globally as sole host')
         return handshake_pb2.AggregateGlobalResponse(return_code=0)
+    
+    def SendDataFrame(self, request, context):
+        # print(request)
+        dct = {}
+        for col in request.columns:
+            # print(f'{col.name=}')
+            if col.HasField("string_values"):
+                # print("string columns")
+                strvals: np.array = np.array(col.string_values.values, dtype=str)
+                # print(strvals)
+                dct[col.name] = strvals
+            elif col.HasField('double_values'):
+                # print("numeric columns")
+                doublevals: np.array = np.array(col.double_values.values, dtype=np.float64)
+                # print(doublevals)
+                dct[col.name] = doublevals
+            else:
+                print('Unknown column type')
+        print(pd.DataFrame(dct))
+        return handshake_pb2.StringResponse(str="It worked")
 
     def Hello(self, request, context):
         instr = str(request.name)
