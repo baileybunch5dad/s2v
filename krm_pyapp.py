@@ -25,8 +25,7 @@ import multiprocessing
 import threading
 import time
 import sys
-
-import sys
+from DynamicDist import DynamicDist
 
 if len(sys.argv) > 1:
     for i, arg in enumerate(sys.argv):
@@ -50,6 +49,8 @@ class HandShakeServer(handshake_pb2_grpc.HandShakeServicer):
         self.port = port
         self.id = id
         self.server = server
+        self.hists = {}
+        self.printed = False
 
     def SendTable(self, request, context):
         dname: str = request.doublename
@@ -77,46 +78,67 @@ class HandShakeServer(handshake_pb2_grpc.HandShakeServicer):
             dc[colname] = coldata
         
         df = pd.DataFrame(dc)
-        print(f"On {os.getpid()=} received\n{df}")
+        if not self.printed:
+            print(f"First frame recieved on {os.getpid()=} received\n{df}")
+            self.printd = True
+        grps = df.groupby(by=['scenario'])
+        for grpid, grp in grps:
+            # print(f"On {os.getpid()=} adding {grpid=}")
+            # print(grp)
+            key = grpid[0]
+            if key not in self.hists.keys():
+                dd = DynamicDist()
+                self.hists[key] = dd
+            else:
+                dd = self.hists[key]
+            histdata = grp['interest'].to_numpy()
+            print(f"On {os.getpid()=} adding {histdata[:3]}... to hist for {key=} ")
+            dd.add_many(histdata)
         return handshake_pb2.ArrayResponse(message="Array received successfully!")
 
     def AggregateLocal(self, request, context):
+        print(f"On {os.getpid()=} AggregateLocal")
         ports: np.array = np.array(request.ports, dtype=int)
-        for p in ports[1:]:
-            channelName = "localhost:" + str(p)
-            print(f'Thread 0 aggregating its results with {channelName}')
-            channel = grpc.insecure_channel(channelName)
-            stub = handshake_pb2_grpc.HandShakeStub(channel)
-            # print(f'Thread 0 aggregating its results with {channelName}')
-            otherThreadResults = stub.GetResults(handshake_pb2.GetResultsRequest(which_results=0))
-            print(f'Python thread 0 received this response from {channelName}')
-            dname: str = otherThreadResults.doublename
-            dvals: np.array = np.array(otherThreadResults.doublevalues, dtype=np.float64)
-            sname: str = otherThreadResults.stringname
-            svals: np.array = np.array(otherThreadResults.stringvalues, dtype=str)
-            df = pd.DataFrame({dname: dvals, sname: svals})
-            print(df.round(2))
+        if len(ports) > 1:
+            for p in ports[1:]:
+                channelName = "localhost:" + str(p)
+                print(f'Thread 0 aggregating its results with {channelName}')
+                channel = grpc.insecure_channel(channelName)
+                stub = handshake_pb2_grpc.HandShakeStub(channel)
+                # print(f'Thread 0 aggregating its results with {channelName}')
+                otherThreadResults = stub.GetResults(handshake_pb2.GetResultsRequest(which_results=0))
+                print(f'Python thread 0 received this response from {channelName}')
+                dname: str = otherThreadResults.doublename
+                dvals: np.array = np.array(otherThreadResults.doublevalues, dtype=np.float64)
+                sname: str = otherThreadResults.stringname
+                svals: np.array = np.array(otherThreadResults.stringvalues, dtype=str)
+                df = pd.DataFrame({dname: dvals, sname: svals})
+                print(df.round(2))
+        else:
+            print('Thread 0 aggregating as sole thread')
         return handshake_pb2.AggregateLocalResponse(return_code=0)
 
     def AggregateGlobal(self, request, context):
-        print(f"ag py 1")
-        print(f"ag py 2")
-        ports: np.array = np.array(request.ports, dtype=int)
-        hosts: np.array = np.array(request.servers, dtype=str)
-        for server in hosts:
-            channelName = server + ":" + str(ports[0])
-            print(f'Server 0 aggregating globally its results with {channelName}')
-            channel = grpc.insecure_channel(channelName)
-            stub = handshake_pb2_grpc.HandShakeStub(channel)
-            # print(f'Server 0 aggregating its results with {channelName}')
-            otherThreadResults = stub.GetResults(handshake_pb2.GetResultsRequest(which_results=1))
-            print(f'Server thread 0 received this response from {channelName}')
-            dname: str = otherThreadResults.doublename
-            dvals: np.array = np.array(otherThreadResults.doublevalues, dtype=np.float64)
-            sname: str = otherThreadResults.stringname
-            svals: np.array = np.array(otherThreadResults.stringvalues, dtype=str)
-            df = pd.DataFrame({dname: dvals, sname: svals})
-            print(df.round(2))
+        print(f"On {os.getpid()=} AggregateGlobal")
+        if len(request.servers) > 0:
+            ports: np.array = np.array(request.ports, dtype=int)
+            hosts: np.array = np.array(request.servers, dtype=str)
+            for server in hosts:
+                channelName = server + ":" + str(ports[0])
+                print(f'Server 0 aggregating globally its results with {channelName}')
+                channel = grpc.insecure_channel(channelName)
+                stub = handshake_pb2_grpc.HandShakeStub(channel)
+                # print(f'Server 0 aggregating its results with {channelName}')
+                otherThreadResults = stub.GetResults(handshake_pb2.GetResultsRequest(which_results=1))
+                print(f'Server thread 0 received this response from {channelName}')
+                dname: str = otherThreadResults.doublename
+                dvals: np.array = np.array(otherThreadResults.doublevalues, dtype=np.float64)
+                sname: str = otherThreadResults.stringname
+                svals: np.array = np.array(otherThreadResults.stringvalues, dtype=str)
+                df = pd.DataFrame({dname: dvals, sname: svals})
+                print(df.round(2))
+        else:
+            print('Thread 0 aggregating globally as sole host')
         return handshake_pb2.AggregateGlobalResponse(return_code=0)
 
     def Hello(self, request, context):

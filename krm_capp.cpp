@@ -51,6 +51,7 @@ public:
         }
         else
         {
+            std::cout << "Shutdown" << std::endl;
             std::cout << status.error_code() << ": " << status.error_message()
                       << std::endl;
             return "RPC failed";
@@ -80,6 +81,7 @@ public:
         }
         else
         {
+            std::cout << "Hello failure" << std::endl;
             std::cout << status.error_code() << ": " << status.error_message()
                       << std::endl;
             return "RPC failed";
@@ -113,6 +115,7 @@ public:
         }
         else
         {
+            std::cout << "SendArray failure" << std::endl;
             std::cout << status.error_code() << ": " << status.error_message()
                       << std::endl;
             return "RPC failed";
@@ -139,6 +142,7 @@ public:
         }
         else
         {
+            std::cout << "AggregateLocal failure" << std::endl;
             std::cout << status.error_code() << ": " << status.error_message()
                       << std::endl;
             return (-1);
@@ -169,6 +173,7 @@ public:
         }
         else
         {
+            std::cout << "AggregateGlobal failure" << std::endl;
             std::cout << status.error_code() << ": " << status.error_message()
                       << std::endl;
             return (-1);
@@ -474,14 +479,10 @@ int main(int argc, char **argv)
         if (thread.joinable())
             thread.join();
     }
-    std::cout << "Everything worked multi-threaded, now aggregate with threads" << std::endl;
+    std::cout << "Local aggregation within threads commencing" << std::endl;
     clients[0]->AggregateLocal(ports);
-    std::cout << "Local aggregation complete" << std::endl;
-    if (externalServers.size() > 0)
-    {
-        std::cout << "Aggregating across external servers" << std::endl;
-        clients[0]->AggregateGlobal(ports, externalServers);
-    }
+    std::cout << "Global aggregation across servers commencing" << std::endl;
+    clients[0]->AggregateGlobal(ports, externalServers);
     std::cout << "Aggregation finished" << std::endl;
 
     if (shutdown)
