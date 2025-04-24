@@ -315,7 +315,32 @@ std::vector<std::string> stringToVector(const std::string &str)
     return result;
 }
 
-int startPythonProcess(std::string pyfname, int argc, char **argv, std::vector<int> ports)
+int startPythonProcessPipe(std::string pyfname, int argc, char **argv, std::vector<int> ports)
+{
+    // pass the arguments
+    std::ostringstream command;
+    command << "python3 " << pyfname << " ";
+    command << argv[1];  // Program to run
+    for (int i = 1; i < argc; ++i) {
+        command << " " << argv[i];  // Append arguments
+    }
+
+    std::string cmdstr = command.str();
+    FILE* pipe = popen(cmdstr.c_str(), "r");
+    if (!pipe) {
+        std::cerr << "Failed to start process\n";
+        exit(1);
+    }
+    std::cout << cmdstr << std::endl;
+
+    char buffer[128];
+    while (fgets(buffer, sizeof(buffer), pipe) != nullptr) {
+        std::cout << buffer;  // Echo output as it runs
+    }
+
+    pclose(pipe);
+}
+int startPythonProcessEmbedded(std::string pyfname, int argc, char **argv, std::vector<int> ports)
 {
     Py_Initialize();
 
@@ -397,7 +422,7 @@ int main(int argc, char **argv)
     if (inprocessPython)
     {
         std::cout << "Launching inprocess Python";
-        pythrd = std::thread(startPythonProcess, "krm_pyapp.py", argc, argv, ports);
+        pythrd = std::thread(startPythonProcessPipe, "krm_pyapp.py", argc, argv, ports);
         sleep(1);
     }
     else

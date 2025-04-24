@@ -77,7 +77,7 @@ class HandShakeServer(handshake_pb2_grpc.HandShakeServicer):
             dc[colname] = coldata
         
         df = pd.DataFrame(dc)
-        print(f"On {os.getpid()} received\n{df}")
+        print(f"On {os.getpid()=} received\n{df}")
         return handshake_pb2.ArrayResponse(message="Array received successfully!")
 
     def AggregateLocal(self, request, context):
