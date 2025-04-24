@@ -26,6 +26,7 @@ import threading
 import time
 import sys
 from DynamicDist import DynamicDist
+from datetime import datetime
 
 ports = [50051,50052,50053,50054]
 if len(sys.argv) > 1:
@@ -156,6 +157,12 @@ class HandShakeServer(handshake_pb2_grpc.HandShakeServicer):
                 doublevals: np.array = np.array(col.double_values.values, dtype=np.float64)
                 # print(doublevals)
                 dct[col.name] = doublevals
+            elif col.HasField('datetime_values'):
+                # print("numeric columns")
+                dtvals: np.array = np.array(col.datetime_values.values, dtype=np.int64)
+                dtvals = dtvals.astype('datetime64[s]')
+                # print(doublevals)
+                dct[col.name] = dtval
             else:
                 print('Unknown column type')
         print(pd.DataFrame(dct))

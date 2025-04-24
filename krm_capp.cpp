@@ -68,15 +68,22 @@ public:
         grpc::ClientContext context;
 
         auto *col1 = request.add_columns();
-        col1->set_name("Col1Str");
+        col1->set_name("SomeStrings");
         auto svalptr = col1->mutable_string_values();
         svalptr->add_values("hello");
         svalptr->add_values("there");
         auto *col2 = request.add_columns();
-        col2->set_name("Col2Num");
+        col2->set_name("NiceNumbers");
         auto dvalptr = col2->mutable_double_values();
         dvalptr->add_values(3.1415);
         dvalptr->add_values(2.7182818);
+        auto *col3 = request.add_columns();
+        col3->set_name("AndDatetimeValues");
+        auto dtvalptr = col3->mutable_datetime_values();
+        auto now = std::chrono::system_clock::now();
+        auto seconds_since_epoch = std::chrono::duration_cast<std::chrono::seconds>(now.time_since_epoch()).count();
+        dtvalptr->add_values(seconds_since_epoch);
+        dtvalptr->add_values(seconds_since_epoch+100);
 
 
         grpc::Status status = stub_->SendDataFrame(&context, request, &response);

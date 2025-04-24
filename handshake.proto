@@ -78,6 +78,7 @@ message Column {
     ValuesFloat float_values = 5;
     ValuesBool bool_values = 6;
     ValuesDouble double_values = 7;
+    ValuesDatetime datetime_values = 8;
   }
 }
 
@@ -88,6 +89,10 @@ enum DataType {
   BOOL = 3;
   DOUBLE = 4;
   DATE = 5;
+}
+
+message ValuesDatetime {
+  repeated int64 values = 1;
 }
 
 message ValuesString {
