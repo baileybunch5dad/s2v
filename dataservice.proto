@@ -1,0 +1,39 @@
+syntax = "proto3";
+
+package dataservice;
+
+// Define message for a single value that can be either double or string
+message Value {
+  oneof value_type {
+    double double_value = 1;
+    int64 long_value = 2;
+    string string_value = 3;
+  }
+}
+
+// Define a single column with name and values
+message Column {
+  string name = 1;
+  repeated Value values = 2;
+}
+
+// Define a table as a collection of columns
+message Table {
+  repeated Column columns = 1;
+}
+
+// Request message containing the table data
+message ProcessDataRequest {
+  Table data = 1;
+}
+
+// Response message
+message ProcessDataResponse {
+  string status = 1;
+  // Add other response fields as needed
+}
+
+// The data service definition
+service DataService {
+  rpc ProcessData (ProcessDataRequest) returns (ProcessDataResponse);
+}

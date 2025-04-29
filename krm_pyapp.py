@@ -53,6 +53,52 @@ class HandShakeServer(handshake_pb2_grpc.HandShakeServicer):
         self.hists = {}
         self.printed = False
 
+    def ProcessData(self, request, context):
+        """
+        Process incoming data from the C++ client
+        """
+        # Prepare response
+        response = handshake_pb2.ProcessDataResponse()
+        
+        # Convert protobuf to pandas DataFrame
+        df = self._protobuf_to_dataframe(request.data)
+        
+        # Print the received data
+        print("Received data:")
+        print(df)
+        
+        # Perform processing on the dataframe
+        # For this example, we'll just report some basic statistics
+        response.status = f"Successfully processed {len(df)} rows with {len(df.columns)} columns"
+        
+        return response
+    
+    def _protobuf_to_dataframe(self, table):
+        """
+        Convert a protobuf Table to a pandas DataFrame
+        """
+        data = {}
+        
+        # Process each column
+        for column in table.columns:
+            column_name = column.name
+            column_values = []
+            
+            # Process values in the column
+            for value in column.values:
+                if value.HasField('double_value'):
+                    column_values.append(value.double_value)
+                elif value.HasField('string_value'):
+                    column_values.append(value.string_value)
+                else:
+                    column_values.append(None)  # Handle empty values
+            
+            # Add the column to our data dictionary
+            data[column_name] = column_values
+        
+        # Create and return DataFrame
+        return pd.DataFrame(data)
+
     def SendTable(self, request, context):
         dname: str = request.doublename
         dvals: np.array = np.array(request.doublevalues, dtype=np.float64)
@@ -143,7 +189,7 @@ class HandShakeServer(handshake_pb2_grpc.HandShakeServicer):
         return handshake_pb2.AggregateGlobalResponse(return_code=0)
     
     def SendDataFrame(self, request, context):
-        # print(request)
+        print(request.columns)
         dct = {}
         for col in request.columns:
             # print(f'{col.name=}')
@@ -157,12 +203,12 @@ class HandShakeServer(handshake_pb2_grpc.HandShakeServicer):
                 doublevals: np.array = np.array(col.double_values.values, dtype=np.float64)
                 # print(doublevals)
                 dct[col.name] = doublevals
-            elif col.HasField('datetime_values'):
+            elif col.HasField('int64_values'):
                 # print("numeric columns")
                 dtvals: np.array = np.array(col.datetime_values.values, dtype=np.int64)
                 dtvals = dtvals.astype('datetime64[s]')
                 # print(doublevals)
-                dct[col.name] = dtval
+                dct[col.name] = dtvals
             else:
                 print('Unknown column type')
         print(pd.DataFrame(dct))

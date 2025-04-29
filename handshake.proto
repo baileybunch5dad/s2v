@@ -3,14 +3,48 @@ syntax = "proto3";
 package handshake;
 
 service HandShake {
+  rpc ProcessData(ProcessDataRequest) returns (ProcessDataResponse) {}
   rpc SendTable (StackedTable) returns (ArrayResponse) {}
   rpc AggregateLocal (AggregateLocalRequest) returns (AggregateLocalResponse) {}
   rpc AggregateGlobal (AggregateGlobalRequest) returns (AggregateGlobalResponse) {}
   rpc GetResults (GetResultsRequest) returns (StackedTable) {}
   rpc Shutdown( ShutdownRequest) returns (ShutdownResponse) {}
   rpc Hello (HelloRequest) returns (HelloResponse) {}  
-  rpc SendDataFrame(DataFrame) returns (StringResponse) {}
+  // rpc SendDataFrame(DataFrame) returns (StringResponse) {}
 }
+
+
+// Define message for a single value that can be either double or string
+message Value {
+  oneof value_type {
+    double double_value = 1;
+    string string_value = 2;
+    int64 int64_value = 3;
+  }
+}
+
+// Define a single column with name and values
+message Column {
+  string name = 1;
+  repeated Value values = 2;
+}
+
+// Define a table as a collection of columns
+message Table {
+  repeated Column columns = 1;
+}
+
+// Request message containing the table data
+message ProcessDataRequest {
+  Table data = 1;
+}
+
+// Response message
+message ProcessDataResponse {
+  string status = 1;
+  // Add other response fields as needed
+}
+
 
 message StringResponse {
   string str = 1;
@@ -64,53 +98,53 @@ message GetResultsRequest {
 }
 
 
-message DataFrame {
-  repeated Column columns = 1;
-  int64 index_count = 2; // Number of rows
-}
+// message DataFrame {
+//   repeated DataColumn columns = 1;
+// }
 
-message Column {
-  string name = 1;
-  DataType data_type = 2;
-  oneof data_values {
-    ValuesString string_values = 3;
-    ValuesInt64 int64_values = 4;
-    ValuesFloat float_values = 5;
-    ValuesBool bool_values = 6;
-    ValuesDouble double_values = 7;
-    ValuesDatetime datetime_values = 8;
-  }
-}
+// message DataColumn {
+//   string name = 1;
+//   repeated ColValue values = 2;
 
-enum DataType {
-  STRING = 0;
-  INT64 = 1;
-  FLOAT = 2;
-  BOOL = 3;
-  DOUBLE = 4;
-  DATE = 5;
-}
+// }
 
-message ValuesDatetime {
-  repeated int64 values = 1;
-}
+// message ColValue {
+//   oneof value_type {
+//     double double_value = 1;
+//     string string_value = 2;
+//     int64 int64_value = 3;
+//   }
+// }
 
-message ValuesString {
-  repeated string values = 1;
-}
+// enum DataType {
+//   STRING = 0;
+//   INT64 = 1;
+//   FLOAT = 2;
+//   BOOL = 3;
+//   DOUBLE = 4;
+//   DATE = 5;
+// }
 
-message ValuesInt64 {
-  repeated int64 values = 1;
-}
+// message ValuesDatetime {
+//   repeated int64 values = 1;
+// }
 
-message ValuesFloat {
-  repeated float values = 1;
-}
+// message ValuesString {
+//   repeated string values = 1;
+// }
 
-message ValuesBool {
-  repeated bool values = 1;
-}
+// message ValuesInt64 {
+//   repeated int64 values = 1;
+// }
 
-message ValuesDouble{
-    repeated double values = 1;
-}
+// message ValuesFloat {
+//   repeated float values = 1;
+// }
+
+// message ValuesBool {
+//   repeated bool values = 1;
+// }
+
+// message ValuesDouble{
+//     repeated double values = 1;
+// }

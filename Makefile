@@ -1,24 +1,7 @@
-all: krm_capp krm_pyapp	
+CXX = g++
+CXXFLAGS = -std=c++17  -I/home/chris/.local/include `python3.11-config --embed --cflags` 
 
-clean:
-	rm handshake.g* handshake_* krm_capp.o krm_capp
-
-handshake_pb2_grpc.py: handshake.proto
-	protoc  -I . --python_out=. --grpc_out=. --plugin=protoc-gen-grpc=`which grpc_python_plugin` handshake.proto 
-
-krm_pyapp: handshake_pb2_grpc.py
-
-handshake.grpc.pb.cc: handshake.proto
-	protoc  -I . --cpp_out=. --grpc_out=. --plugin=protoc-gen-grpc=`which grpc_cpp_plugin` handshake.proto 
-
-handshake.grpc.pb.o: handshake.grpc.pb.cc
-	g++ -std=c++17 -I/home/chris/.local/include  -pthread -c *.cc
-
-krm_capp.o: krm_capp.cpp handshake.grpc.pb.cc
-	g++ -std=c++17 -I/home/chris/.local/include  `python3.11-config --embed --cflags` -pthread -c krm_capp.cpp
-
-krm_capp: krm_capp.o  handshake.grpc.pb.o
-	g++ krm_capp.o handshake.grpc.pb.o handshake.pb.o -o krm_capp \
+CBLDSTUFF = \
 	/home/chris/.local/lib64/libabsl_flags_parse.a  \
 	/home/chris/.local/lib/libgrpc++_reflection.a  \
 	/home/chris/.local/lib/libgrpc++.a  \
@@ -125,3 +108,57 @@ krm_capp: krm_capp.o  handshake.grpc.pb.o
 	/home/chris/.local/lib64/libabsl_decode_rust_punycode.a  \
 	/home/chris/.local/lib64/libabsl_utf8_for_code_point.a \
 	`python3.11-config --ldflags --embed`
+
+all: krm_capp krm_pyapp	data_client data_server
+
+data_client: dataservice.pb.o DataServiceServicer.py DataServiceClient.o 
+	g++ DataServiceClient.o \
+	dataservice*.o \
+	-o data_client \
+	$(CBLDSTUFF)
+
+DataServiceServicer.py: dataservice.proto
+	protoc  -I . --python_out=. --grpc_out=. --plugin=protoc-gen-grpc=`which grpc_python_plugin` dataservice.proto 
+
+dataservice.pb.cc: dataservice.proto
+	protoc  -I . --cpp_out=. --grpc_out=. --plugin=protoc-gen-grpc=`which grpc_cpp_plugin` dataservice.proto 
+
+dataservice.pb.o: dataservice.pb.cc
+	$(CXX) $(CXXFLAGS) -c data*.cc
+
+DataServiceClient.o: DataServiceClient.cpp dataservice.pb.cc
+	$(CXX) $(CXXFLAGS) -c DataS*.cpp
+
+data_server: data_service.proto
+
+clean:
+	rm handshake.g* handshake_* krm_capp.o krm_capp HandShakeClient.o ChunkedDataFrame.o
+
+handshake_pb2_grpc.py: handshake.proto
+	protoc  -I . --python_out=. --grpc_out=. --plugin=protoc-gen-grpc=`which grpc_python_plugin` handshake.proto 
+
+krm_pyapp: handshake_pb2_grpc.py
+
+handshake.grpc.pb.cc: handshake.proto
+	protoc  -I . --cpp_out=. --grpc_out=. --plugin=protoc-gen-grpc=`which grpc_cpp_plugin` handshake.proto 
+
+handshake.grpc.pb.o: handshake.grpc.pb.cc
+	$(CXX) $(CXXFLAGS) -c ha*.cc
+
+ChunkedDataFrame.o: ChunkedDataFrame.cpp
+	$(CXX)  $(CXXFLAGS) -c ChunkedDataFrame.cpp
+
+EmbeddedPythonController.o: EmbeddedPythonController.cpp
+	$(CXX)  $(CXXFLAGS) -c EmbeddedPythonController.cpp
+
+HandShakeClient.o: HandShakeClient.cpp
+	$(CXX)  $(CXXFLAGS) -c  HandShakeClient.cpp
+
+krm_capp.o: krm_capp.cpp handshake.grpc.pb.cc 
+	$(CXX)  $(CXXFLAGS) -pthread -c krm_capp.cpp
+
+krm_capp: krm_capp.o  handshake.grpc.pb.o HandShakeClient.o ChunkedDataFrame.o EmbeddedPythonController.o
+	g++ krm_capp.o \
+	HandShakeClient.o ChunkedDataFrame.o EmbeddedPythonController.o \
+	handshake.grpc.pb.o handshake.pb.o -o krm_capp \
+	$(CBLDSTUFF)
