@@ -14,10 +14,10 @@ class DataServiceServicer(dataservice_pb2_grpc.DataServiceServicer):
         Process incoming data from the C++ client
         """
         # Prepare response
-        response = dataservice_pb2.ProcessDataResponse()
+        response = dataservice_pb2.StringResponse()
         
-        # Convert protobuf to pandas DataFrame
-        df = self._protobuf_to_dataframe(request.data)
+        print(request)
+        df = self._protobuf_to_dataframe(request)
         
         # Print the received data
         print("Received data:")
@@ -40,16 +40,20 @@ class DataServiceServicer(dataservice_pb2_grpc.DataServiceServicer):
             column_name = column.name
             column_values = []
             
+            print(column)
             # Process values in the column
-            for value in column.values:
-                if value.HasField('double_value'):
-                    column_values.append(value.double_value)
-                elif value.HasField('int64_value'):
-                    column_values.append(value.int64_value)
-                elif value.HasField('string_value'):
-                    column_values.append(value.string_value)
-                else:
-                    column_values.append(None)  # Handle empty values
+            # for value in column.values:
+            if column.HasField('double_array'):
+                column_values = list(column.double_array.v)
+                # column_values.append(value.double_value)
+            elif column.HasField('long_array'):
+                # column_values.append(value.long_value)
+                column_values = list(column.long_array.v)
+            elif column.HasField('string_array'):
+                # column_values.append(value.string_value)
+                column_values = list(column.string_array.v)
+            else:
+                column_values = []
             
             # Add the column to our data dictionary
             data[column_name] = column_values

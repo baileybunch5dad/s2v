@@ -58,14 +58,33 @@ class HandShakeServer(handshake_pb2_grpc.HandShakeServicer):
         Process incoming data from the C++ client
         """
         # Prepare response
-        response = handshake_pb2.ProcessDataResponse()
+        response = handshake_pb2.StringResponse()
         
         # Convert protobuf to pandas DataFrame
-        df = self._protobuf_to_dataframe(request.data)
+        df = self._protobuf_to_dataframe(request)
         
         # Print the received data
-        print("Received data:")
-        print(df)
+        if not self.printed:
+            print(f"PID {os.getpid()} receiving frames like ")
+            print(df)
+            # self.printed = True
+
+        grps = df.groupby(by=['scenario'])
+        allkeys = []
+        for grpid, grp in grps:
+            # print(f"On {os.getpid()=} adding {grpid=}")
+            # print(grp)
+            key = grpid[0]
+            if key not in self.hists.keys():
+                dd = DynamicDist()
+                self.hists[key] = dd
+            else:
+                dd = self.hists[key]
+            histdata = grp['par_bal'].to_numpy()
+            # print(f"On {os.getpid()=} adding {histdata[:3]}... to hist for {key=} ")
+            allkeys.append(key)
+            dd.add_many(histdata)            
+        print(f"On {os.getpid()=} updated distributions for {allkeys[:5]}... ")
         
         # Perform processing on the dataframe
         # For this example, we'll just report some basic statistics
@@ -82,20 +101,19 @@ class HandShakeServer(handshake_pb2_grpc.HandShakeServicer):
         # Process each column
         for column in table.columns:
             column_name = column.name
-            column_values = []
+            # column_values = []
             
             # Process values in the column
-            for value in column.values:
-                if value.HasField('double_value'):
-                    column_values.append(value.double_value)
-                elif value.HasField('string_value'):
-                    column_values.append(value.string_value)
-                elif value.HasField('long_value'):
-                    l = value.long_value
-                    dt = datetime.fromtimestamp(l).strftime("%Y-%m-%d")
-                    column_values.append(dt)
-                else:
-                    column_values.append(None)  # Handle empty values
+            # for value in column.values:
+            if column.HasField('double_array'):
+                column_values = list(column.double_array.v)
+            elif column.HasField('string_array'):
+                column_values = list(column.string_array.v)
+            elif column.HasField('long_array'):
+                ll = list(column.long_array.v)
+                column_values = [datetime.fromtimestamp(lv).strftime("%Y-%m-%d") for lv in ll]
+            else:
+                column_values = []
             
             # Add the column to our data dictionary
             data[column_name] = column_values

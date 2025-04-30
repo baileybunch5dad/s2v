@@ -4,6 +4,7 @@
 #include <memory>
 #include <string>
 #include <thread>
+#include <sstream>
 #include "absl/flags/flag.h"
 #include "absl/flags/parse.h"
 
@@ -19,26 +20,36 @@
 void EmbeddedPythonController::AsynchStreamDataToPython(HandShakeClient *handshakeClient, int clientIdx, 
 int numClients, ChunkedDataFrame *cdf)
 {
-    int chunkSize = 5;
-    // long totRows = 28229622;
-    // long totRowsRead = 0;
+    std::thread::id threadId = std::this_thread::get_id();
+    std::stringstream ss;
+    ss << threadId;
+    std::string threadIdStr = ss.str();
+    auto start_time = std::chrono::high_resolution_clock::now();
     int clientNum = 0;
+    int chunkSize = 5000;
+    long totRows = 28229622;
+    long totRowsRead = 0;
     for (int rowsRead = cdf->readChunk(chunkSize); rowsRead > 0; rowsRead = cdf->readChunk(chunkSize))
     {
         if (clientNum == clientIdx)
         {
-            std::cout << "Sending chunk " << clientNum << std::endl;
+            // std::cout << "Sending chunk " << clientNum << std::endl;
             handshakeClient->ProcessData(cdf->columnData);
         }
         else
         {
-            std::cout << "Skipping chunk " << clientNum << std::endl;
+            // std::cout << "Skipping chunk " << clientNum << std::endl;
         }
         clientNum++;
         if (clientNum == numClients)
         {
             clientNum = 0;
         }
+        auto cur_time = std::chrono::high_resolution_clock::now();
+        totRowsRead += rowsRead;
+        double percentComplete = 100.*(totRowsRead)/totRows;
+        std::chrono::duration<double> elapsed_seconds = cur_time - start_time;
+        std::cout << "Thread " << threadIdStr << " Percent complete " << percentComplete << "% Elapsed " << elapsed_seconds.count() << " seconds." << std::endl;
     }
 
     // for (int i = 0; i < 1; i++)

@@ -14,13 +14,13 @@ HandShakeClient::HandShakeClient(std::shared_ptr<Channel> channel)
 
 std::string HandShakeClient::ProcessData(const NamedColumns &columnsData)
 {
-    ProcessDataRequest request;
-    Table *table = request.mutable_data();
+    Table request{};
+    // Table *table = request.mutable_data();
 
     // Fill the table with columns
     for (const auto &columnData : columnsData)
     {
-        Column *column = table->add_columns();
+        Column *column = request.add_columns();
         std::string name = columnData.first;
         column->set_name(name);
 
@@ -28,40 +28,37 @@ std::string HandShakeClient::ProcessData(const NamedColumns &columnsData)
 
         SingleColumn vec = columnData.second;
 
-        if (std::holds_alternative<std::vector<double>*>(vec))
+        if (std::holds_alternative<std::vector<double> *>(vec))
         {
-            std::vector<double> *dv = std::get<std::vector<double>*>(vec);
+            std::vector<double> *dv = std::get<std::vector<double> *>(vec);
+            DoubleArray *double_array = column->mutable_double_array();
             for (auto d : *dv)
             {
-                Value *value = column->add_values();
-                // std::cout << d << std::endl;
-                value->set_double_value(d);
+                double_array->add_v(d);
             }
         }
-        else if (std::holds_alternative<std::vector<int64_t>*>(vec))
+        else if (std::holds_alternative<std::vector<int64_t> *>(vec))
         {
-            std::vector<int64_t> *iv = std::get<std::vector<int64_t>*>(vec);
+            std::vector<int64_t> *iv = std::get<std::vector<int64_t> *>(vec);
+            LongArray *long_array = column->mutable_long_array();
             for (auto i : *iv)
             {
-                Value *value = column->add_values();
-                // std::cout << i << std::endl;
-                value->set_long_value(i);
+                long_array->add_v(i);
             }
         }
-        else if (std::holds_alternative<std::vector<std::string>*>(vec))
+        else if (std::holds_alternative<std::vector<std::string> *>(vec))
         {
-            std::vector<std::string> *sv = std::get<std::vector<std::string>*>(vec);
+            std::vector<std::string> *sv = std::get<std::vector<std::string> *>(vec);
+            StringArray *string_array = column->mutable_string_array();
             for (auto s : *sv)
             {
-                Value *value = column->add_values();
-                // std::cout << s << std::endl;
-                value->set_string_value(s);
+                string_array->add_v(s);
             }
         }
     }
 
     // Prepare response
-    ProcessDataResponse response;
+    StringResponse response;
 
     // Set up context
     ClientContext context;

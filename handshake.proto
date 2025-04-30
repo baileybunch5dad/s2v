@@ -3,7 +3,7 @@ syntax = "proto3";
 package handshake;
 
 service HandShake {
-  rpc ProcessData(ProcessDataRequest) returns (ProcessDataResponse) {}
+  rpc ProcessData(Table) returns (StringResponse) {}
   rpc SendTable (StackedTable) returns (ArrayResponse) {}
   rpc AggregateLocal (AggregateLocalRequest) returns (AggregateLocalResponse) {}
   rpc AggregateGlobal (AggregateGlobalRequest) returns (AggregateGlobalResponse) {}
@@ -13,42 +13,71 @@ service HandShake {
   // rpc SendDataFrame(DataFrame) returns (StringResponse) {}
 }
 
-
-// Define message for a single value that can be either double or string
-message Value {
-  oneof value_type {
-    double double_value = 1;
-    string string_value = 2;
-    int64 long_value = 3;
+// Message containing an array with either strings or doubles, plus a name field
+message Column {
+  string name = 1; // New field for identifying the array
+  oneof data_type {
+      StringArray string_array = 2;
+      DoubleArray double_array = 3;
+      LongArray long_array = 4;
   }
 }
 
-// Define a single column with name and values
-message Column {
-  string name = 1;
-  repeated Value values = 2;
+message LongArray {
+repeated int64 v = 1;
+}
+message StringArray {
+repeated string v = 1;
 }
 
-// Define a table as a collection of columns
+message DoubleArray {
+repeated double v = 1;
+}
+
+// Wrapper message to send multiple arrays
 message Table {
   repeated Column columns = 1;
 }
 
-// Request message containing the table data
-message ProcessDataRequest {
-  Table data = 1;
+message StringResponse {
+  string status = 1;
 }
+
+// Define message for a single value that can be either double or string
+// message Value {
+//   oneof value_type {
+//     double double_value = 1;
+//     string string_value = 2;
+//     int64 long_value = 3;
+//   }
+// }
+
+// // Define a single column with name and values
+// message Column {
+//   string name = 1;
+//   repeated Value values = 2;
+// }
+
+// // Define a table as a collection of columns
+// message Table {
+//   repeated Column columns = 1;
+// }
+
+// Request message containing the table data
+// message ProcessDataRequest {
+//   Table data = 1;
+// }
 
 // Response message
-message ProcessDataResponse {
-  string status = 1;
-  // Add other response fields as needed
-}
+// message ProcessDataResponse {
+//   string status = 1;
+//   // Add other response fields as needed
+// }
 
 
-message StringResponse {
-  string str = 1;
-}
+// message StringResponse {
+//   string str = 1;
+// }
 
 message HelloRequest {
   string name = 1;

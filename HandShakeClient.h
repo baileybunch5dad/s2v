@@ -32,12 +32,13 @@ using handshake::StackedTable;
 using handshake::StringResponse;
 // using handshake::DataFrame;
 using handshake::Column;
-using handshake::Value;
-using handshake::ProcessDataRequest;
-using handshake::ProcessDataResponse;
 using handshake::Table;
-using handshake::Column;
-using handshake::Value;
+using handshake::StringArray;
+using handshake::DoubleArray;
+using handshake::LongArray;
+// using handshake::Table;
+// using handshake::Column;
+// using handshake::Value;
 
 
 
