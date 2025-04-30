@@ -33,8 +33,15 @@ int numClients, ChunkedDataFrame *cdf)
     {
         if (clientNum == clientIdx)
         {
-            // std::cout << "Sending chunk " << clientNum << std::endl;
+            totRowsRead += rowsRead;
+
             handshakeClient->ProcessData(cdf->columnData);
+
+            // std::cout << "Sending chunk " << clientNum << std::endl;
+            auto cur_time = std::chrono::high_resolution_clock::now();
+            double percentComplete = 100.*(totRowsRead)/((totRows+0.0)/numClients);
+            std::chrono::duration<double> elapsed_seconds = cur_time - start_time;
+            std::cout << "Thread " << threadIdStr << " processed " << totRowsRead << " rows, percent complete " << percentComplete << "% Elapsed " << elapsed_seconds.count() << " seconds." << std::endl;
         }
         else
         {
@@ -45,11 +52,11 @@ int numClients, ChunkedDataFrame *cdf)
         {
             clientNum = 0;
         }
-        auto cur_time = std::chrono::high_resolution_clock::now();
-        totRowsRead += rowsRead;
-        double percentComplete = 100.*(totRowsRead)/totRows;
-        std::chrono::duration<double> elapsed_seconds = cur_time - start_time;
-        std::cout << "Thread " << threadIdStr << " Percent complete " << percentComplete << "% Elapsed " << elapsed_seconds.count() << " seconds." << std::endl;
+        // auto cur_time = std::chrono::high_resolution_clock::now();
+        // totRowsRead += rowsRead;
+        // double percentComplete = 100.*(totRowsRead)/totRows;
+        // std::chrono::duration<double> elapsed_seconds = cur_time - start_time;
+        // std::cout << "Thread " << threadIdStr << " Percent complete " << percentComplete << "% Elapsed " << elapsed_seconds.count() << " seconds." << std::endl;
     }
 
     // for (int i = 0; i < 1; i++)
