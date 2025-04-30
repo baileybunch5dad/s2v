@@ -42,7 +42,6 @@ using handshake::LongArray;
 
 
 
-
 class HandShakeClient
 {
 public:
