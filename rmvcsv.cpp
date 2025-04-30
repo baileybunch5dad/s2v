@@ -29,6 +29,28 @@ int main()
     {
         for (int colIndex = 0; colIndex < cdf.columnData.size(); colIndex++)
         {
+            std::string name = cdf.columnData[colIndex].first;
+            SingleColumn c = cdf.columnData[colIndex].second;
+            std::cout << name << " ";
+            if(std::holds_alternative<std::vector<std::string>*>(c)) {
+                std::vector<std::string>* sv = std::get<std::vector<std::string>*>(c);             
+                for(auto s : *sv) {
+                    std::cout << s << " ";
+                }
+            }
+            else if(std::holds_alternative<std::vector<double>*>(c)) {
+                std::vector<double>* dv = std::get<std::vector<double>*>(c);             
+                for(auto d : *dv) {
+                    std::cout << d << " ";
+                }
+            }
+            else if(std::holds_alternative<std::vector<int64_t>*>(c)) {
+                std::vector<int64_t>* lv = std::get<std::vector<int64_t>*>(c);             
+                for(auto l : *lv) {
+                    std::cout << l << " ";
+                }
+            }
+            std::cout << std::endl;
             // std::cout << cdf.columnNames[colIndex] << " ";
             // if (cdf.columnTypes[colIndex] == 'd')
             // {

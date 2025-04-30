@@ -13,6 +13,7 @@
 #include <variant>
 #include <stdexcept>
 #include <chrono>
+#include <memory>
 #include "ChunkedDataFrame.h"
 
 ChunkedDataFrame::ChunkedDataFrame(std::string &file_path)
@@ -87,13 +88,22 @@ void ChunkedDataFrame::allocateStorage()
 
     for (size_t col = 0; col < columnTypes.size(); col++)
     {
+        columns.emplace_back();
+        std::string name = columnNames[col];
+        SingleColumn variant_ptr {};
         if (columnTypes[col] == 'f')
-            columnData.emplace_back(new std::vector<double>);
+        {
+            variant_ptr = new std::vector<double>{};
+        }
         else if (columnTypes[col] == 'c')
-            columnData.emplace_back(new std::vector<std::string>);
+        {
+            variant_ptr = new std::vector<std::string>{};
+        }
         else if (columnTypes[col] == 'd')
-            columnData.emplace_back(new std::vector<int64_t>);
-        columns.emplace_back(); // Create a column for each header
+        {
+            variant_ptr = new std::vector<int64_t>{};
+        }
+        columnData.push_back({name, variant_ptr});
     }
 }
 
@@ -101,12 +111,25 @@ void ChunkedDataFrame::clearData()
 {
     for (size_t col = 0; col < columnTypes.size(); col++)
     {
-        if (columnTypes[col] == 'f')
-            (std::get<std::vector<double> *>(columnData[col]))->clear();
-        else if (columnTypes[col] == 'c')
-            (std::get<std::vector<std::string> *>(columnData[col]))->clear();
-        else if (columnTypes[col] == 'd')
-            (std::get<std::vector<int64_t> *>(columnData[col]))->clear();
+        std::string name = columnData[col].first;
+        SingleColumn v = columnData[col].second;
+
+        if (columnTypes[col] == 'f') {
+            std::vector<double>* dvp = std::get<std::vector<double>*>(v);
+            dvp->clear();
+        }
+        else if (columnTypes[col] == 'd') {
+            std::vector<int64_t>* ivp = std::get<std::vector<int64_t>*>(v);
+            ivp->clear();
+        }
+        else if (columnTypes[col] == 'c') {
+            std::vector<std::string>* svp = std::get<std::vector<std::string>*>(v);
+            svp->clear();
+        }
+        // else if (columnTypes[col] == 'c')
+        //     (std::get<std::vector<std::string>>(v))->clear();
+        // else if (columnTypes[col] == 'd')
+        //     (std::get<std::vector<int64_t>>(v)->clear();
         columns[col].clear();
     }
 }
@@ -187,19 +210,18 @@ bool ChunkedDataFrame::is_number(const std::string &s)
     return (iss >> number) && iss.eof();
 }
 
-
-std::vector<int64_t> *ChunkedDataFrame::dateCol(int colIndex)
-{
-    return std::get<std::vector<int64_t> *>(columnData[colIndex]);
-}
-std::vector<double> *ChunkedDataFrame::doubleCol(int colIndex)
-{
-    return std::get<std::vector<double> *>(columnData[colIndex]);
-}
-std::vector<std::string> *ChunkedDataFrame::stringCol(int colIndex)
-{
-    return std::get<std::vector<std::string> *>(columnData[colIndex]);
-}
+// std::vector<int64_t> *ChunkedDataFrame::dateCol(int colIndex)
+// {
+//     return std::get<std::vector<int64_t> *>(columnData[colIndex]);
+// }
+// std::vector<double> *ChunkedDataFrame::doubleCol(int colIndex)
+// {
+//     return std::get<std::vector<double> *>(columnData[colIndex]);
+// }
+// std::vector<std::string> *ChunkedDataFrame::stringCol(int colIndex)
+// {
+//     return std::get<std::vector<std::string> *>(columnData[colIndex]);
+// }
 
 int ChunkedDataFrame::readCsvIntoColumns(int maxRows)
 {
@@ -217,7 +239,7 @@ int ChunkedDataFrame::readCsvIntoColumns(int maxRows)
             columns[col_index].push_back(cell); // Add value to corresponding column
             ++col_index;
         }
-        if((size_t) col_index < columnNames.size())
+        if ((size_t)col_index < columnNames.size())
             columns[col_index++].push_back("");
         // std::cout << "Populated data for " << columnNames[0] << ".." <<  columnNames[col_index-1] << std::endl;
         row++;
@@ -234,23 +256,25 @@ int ChunkedDataFrame::readChunk(int maxRows)
 
     for (size_t colIndex = 0; colIndex < columnTypes.size(); colIndex++)
     {
+        std::string name = columnData[colIndex].first;
+        SingleColumn mv = columnData[colIndex].second;
         if (columnTypes[colIndex] == 'd')
         {
-            auto dateVec = dateCol(colIndex);
+            std::vector<int64_t>* dateVecPtr = std::get<std::vector<int64_t>*>(mv);
             for (auto &cell : columns[colIndex])
-                dateVec->emplace_back(parseDate(cell));
+                dateVecPtr->emplace_back(parseDate(cell));
         }
         else if (columnTypes[colIndex] == 'f')
         {
-            auto doubleVec = doubleCol(colIndex);
+            std::vector<double>* doubleVecPtr = std::get<std::vector<double>*>(mv);
             for (auto &cell : columns[colIndex])
-                doubleVec->emplace_back(parseDouble(cell));
+                doubleVecPtr->emplace_back(parseDouble(cell));
         }
         else
         {
-            auto stringVec = stringCol(colIndex);
+            std::vector<std::string>* stringVecPtr = std::get<std::vector<std::string>*>(mv);
             for (auto &cell : columns[colIndex])
-                stringVec->emplace_back(cell);
+                stringVecPtr->emplace_back(cell);
         }
     }
     if (row < maxRows)

@@ -19,7 +19,7 @@ message Value {
   oneof value_type {
     double double_value = 1;
     string string_value = 2;
-    int64 int64_value = 3;
+    int64 long_value = 3;
   }
 }
 

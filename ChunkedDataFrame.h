@@ -16,19 +16,21 @@
 #include <variant>
 #include <stdexcept>
 #include <chrono>
+#include <memory>
+#include "columnvariant.h"
 
 class ChunkedDataFrame
 {
 public:
     std::vector<std::string> columnNames;
     std::vector<char> columnTypes;
-    std::vector<std::variant<std::vector<std::string> *, std::vector<double> *, std::vector<int64_t> *>> columnData;
+    NamedColumns columnData;
 
 
     explicit ChunkedDataFrame(std::string &file_path);
-    std::vector<int64_t> *dateCol(int colIndex);
-    std::vector<double> *doubleCol(int colIndex);    
-    std::vector<std::string> *stringCol(int colIndex);
+    // std::vector<int64_t> &dateCol(int colIndex);
+    // std::vector<double> &doubleCol(int colIndex);    
+    // std::vector<std::string> &stringCol(int colIndex);
     int readChunk(int maxRows);
 
 private:    

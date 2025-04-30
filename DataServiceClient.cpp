@@ -15,9 +15,8 @@ using grpc::Channel;
 using grpc::ClientContext;
 using grpc::Status;
 
-using MyVariant = std::variant<std::vector<std::string>, std::vector<double>, std::vector<int64_t>>;
-
-
+using SingleColumn = std::variant<std::vector<std::string>*, std::vector<double>*, std::vector<int64_t>*>;
+using NamedColumns = std::vector<std::pair<std::string, SingleColumn>>;
 
 class DataServiceClient
 {
@@ -26,7 +25,7 @@ public:
         : stub_(DataService::NewStub(channel)) {}
 
     // Send data to server
-    std::string ProcessData(const std::vector<std::pair<std::string, MyVariant>> &columnsData)
+    std::string ProcessData(const NamedColumns &columnsData)
     {
         // Create request
         ProcessDataRequest request;
@@ -41,71 +40,78 @@ public:
 
             // Add values to the column
 
-            MyVariant vec = columnData.second;
+            SingleColumn vec = columnData.second;
 
-            if(std::holds_alternative<std::vector<double>>(vec)) {
-                std::vector<double> &dv = std::get<std::vector<double>>(vec);
-                for(auto d : dv) {
+            if (std::holds_alternative<std::vector<double>*>(vec))
+            {
+                std::vector<double> *dv = std::get<std::vector<double>*>(vec);
+                for (auto d : *dv)
+                {
                     Value *value = column->add_values();
                     std::cout << d << std::endl;
                     value->set_double_value(d);
                 }
             }
-            else if(std::holds_alternative<std::vector<int64_t>>(vec)) {
-                std::vector<int64_t> &iv = std::get<std::vector<int64_t>>(vec);
-                for(auto i : iv) {
+            else if (std::holds_alternative<std::vector<int64_t>*>(vec))
+            {
+                std::vector<int64_t> *iv = std::get<std::vector<int64_t>*>(vec);
+                for (auto i : *iv)
+                {
                     Value *value = column->add_values();
                     std::cout << i << std::endl;
                     value->set_long_value(i);
                 }
             }
-            else if(std::holds_alternative<std::vector<std::string>>(vec)) {
-                std::vector<std::string> &sv = std::get<std::vector<std::string>>(vec);
-                for(auto s : sv) {
+            else if (std::holds_alternative<std::vector<std::string>*>(vec))
+            {
+                std::vector<std::string> *sv = std::get<std::vector<std::string>*>(vec);
+                for (auto s : *sv)
+                {
                     Value *value = column->add_values();
                     std::cout << s << std::endl;
                     value->set_string_value(s);
                 }
             }
-
-            // for (const auto &val : columnData.second)
-            // {
-            //     Value *value = column->add_values();
-
-            //     if (std::holds_alternative<double>(val))
-            //         value->set_double_value(std::get<double>(val));
-            //     else if (std::holds_alternative<int64_t>(val))
-            //         value->set_long_value(std::get<double>(val));
-            //     else
-            //         value->set_string_value(std::get<std::string>(val));
-            // }
         }
 
-        // Prepare response
-        ProcessDataResponse response;
+        // for (const auto &val : columnData.second)
+        // {
+        //     Value *value = column->add_values();
 
-        // Set up context
-        ClientContext context;
+        //     if (std::holds_alternative<double>(val))
+        //         value->set_double_value(std::get<double>(val));
+        //     else if (std::holds_alternative<int64_t>(val))
+        //         value->set_long_value(std::get<double>(val));
+        //     else
+        //         value->set_string_value(std::get<std::string>(val));
+        // }
+    // }
 
-        // Call RPC
-        Status status = stub_->ProcessData(&context, request, &response);
+    // Prepare response
+    ProcessDataResponse response;
 
-        // Check status
-        if (status.ok())
-        {
-            return response.status();
-        }
-        else
-        {
-            std::cout << "RPC failed: " << status.error_message() << std::endl;
-            return "RPC failed: " + status.error_message();
-        }
+    // Set up context
+    ClientContext context;
+
+    // Call RPC
+    Status status = stub_->ProcessData(&context, request, &response);
+
+    // Check status
+    if (status.ok())
+    {
+        return response.status();
     }
+    else
+    {
+        std::cout << "RPC failed: " << status.error_message() << std::endl;
+        return "RPC failed: " + status.error_message();
+    }
+}
 
-private:
-    std::unique_ptr<DataService::Stub>
-        stub_;
-};
+private : std::unique_ptr<DataService::Stub>
+              stub_;
+}
+;
 
 int main()
 {
@@ -117,21 +123,21 @@ int main()
     DataServiceClient client(channel);
 
     // Create example data: two columns, one numeric and one string
-    std::vector<std::pair<std::string, MyVariant>> data;
+    NamedColumns data;
     // std::vector<std::pair<std::string, std::vector<std::variant<double, int64_t, std::string>>>> data;
 
     // Create a numeric column named "prices"
-    MyVariant prices = std::vector<double>{10.5, 20.3, 15.7, 30.2};
+    SingleColumn prices = new std::vector<double>{10.5, 20.3, 15.7, 30.2};
     // std::vector<std::variant<double, int64_t, std::string>> prices = {10.5, 20.3, 15.7, 30.2};
     data.push_back({"prices", prices});
 
     // Create a string column named "categories"
     // std::vector<std::variant<double, int64_t, std::string>> categories = {"food", "electronics", "books", "clothes"};
-    MyVariant categories = std::vector<std::string>{"food", "electronics", "books", "clothes"};
+    SingleColumn categories = new std::vector<std::string>{"food", "electronics", "books", "clothes"};
     data.push_back({"categories", categories});
 
     // std::vector<std::variant<double, int64_t, std::string>> numbers = {12345L, 6789L, 271819L, 311415L};
-    MyVariant dates = std::vector<int64_t>{12345L, 6789L, 271819L, 311415L};
+    SingleColumn dates = new std::vector<int64_t>{12345L, 6789L, 271819L, 311415L};
     // for(auto nOuter: numbers) {
     //     auto nInner = std::get<int64_t>(nOuter);
     //     std::cout << nInner << std::endl;

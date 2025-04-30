@@ -8,10 +8,12 @@
 #include <thread>
 #include "absl/flags/flag.h"
 #include "absl/flags/parse.h"
+#include <memory>
 
 #include "handshake.grpc.pb.h"
 #include "HandShakeClient.h"
 #include "ChunkedDataFrame.h"
+#include "columnvariant.h"
 
 class EmbeddedPythonController
 {

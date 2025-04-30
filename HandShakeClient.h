@@ -9,6 +9,7 @@
 #include "absl/flags/parse.h"
 
 #include "handshake.grpc.pb.h"
+#include "columnvariant.h"
 
 using grpc::Channel;
 using grpc::ClientContext;
@@ -39,6 +40,8 @@ using handshake::Column;
 using handshake::Value;
 
 
+
+
 class HandShakeClient
 {
 public:
@@ -48,7 +51,7 @@ public:
     //                           std::vector<char> &columnTypes,
     //                           std::vector<std::variant<std::vector<std::string> *, std::vector<double> *, std::vector<int64_t> *>> &columnData);
     std::string Hello(std::string instr);
-    std::string ProcessTable(const std::vector<std::pair<std::string, std::vector<std::variant<double, int64_t, std::string>>>> &columnsData);
+    std::string ProcessData(const NamedColumns &columnsData);
     std::string SendArray(const std::string &dnames, const std::vector<double> &dvals,
                           const std::string &snames, const std::vector<std::string> &svals);
     int AggregateLocal(const std::vector<int> &ports);

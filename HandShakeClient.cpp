@@ -12,9 +12,8 @@
 HandShakeClient::HandShakeClient(std::shared_ptr<Channel> channel)
     : stub_(HandShake::NewStub(channel)) {}
 
-std::string HandShakeClient::ProcessTable(const std::vector<std::pair<std::string, std::vector<std::variant<double, int64_t,  std::string>>>> &columnsData)
+std::string HandShakeClient::ProcessData(const NamedColumns &columnsData)
 {
-    // Create request
     ProcessDataRequest request;
     Table *table = request.mutable_data();
 
@@ -22,24 +21,41 @@ std::string HandShakeClient::ProcessTable(const std::vector<std::pair<std::strin
     for (const auto &columnData : columnsData)
     {
         Column *column = table->add_columns();
-        column->set_name(columnData.first);
+        std::string name = columnData.first;
+        column->set_name(name);
 
         // Add values to the column
-        for (const auto &val : columnData.second)
-        {
-            Value *value = column->add_values();
 
-            if (std::holds_alternative<double>(val))
+        SingleColumn vec = columnData.second;
+
+        if (std::holds_alternative<std::vector<double>*>(vec))
+        {
+            std::vector<double> *dv = std::get<std::vector<double>*>(vec);
+            for (auto d : *dv)
             {
-                value->set_double_value(std::get<double>(val));
+                Value *value = column->add_values();
+                // std::cout << d << std::endl;
+                value->set_double_value(d);
             }
-            else if (std::holds_alternative<int64_t>(val))
+        }
+        else if (std::holds_alternative<std::vector<int64_t>*>(vec))
+        {
+            std::vector<int64_t> *iv = std::get<std::vector<int64_t>*>(vec);
+            for (auto i : *iv)
             {
-                value->set_int64_value(std::get<int64_t>(val));
+                Value *value = column->add_values();
+                // std::cout << i << std::endl;
+                value->set_long_value(i);
             }
-            else
+        }
+        else if (std::holds_alternative<std::vector<std::string>*>(vec))
+        {
+            std::vector<std::string> *sv = std::get<std::vector<std::string>*>(vec);
+            for (auto s : *sv)
             {
-                value->set_string_value(std::get<std::string>(val));
+                Value *value = column->add_values();
+                // std::cout << s << std::endl;
+                value->set_string_value(s);
             }
         }
     }

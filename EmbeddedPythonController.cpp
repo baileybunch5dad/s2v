@@ -16,7 +16,8 @@
 // ABSL_FLAG(std::string, target, server + ":" + "50051", "Server address");
 
 // Function to run a client in a separate thread
-void EmbeddedPythonController::AsynchStreamDataToPython(HandShakeClient *handshakeClient, int clientIdx, int numClients, ChunkedDataFrame *cdf)
+void EmbeddedPythonController::AsynchStreamDataToPython(HandShakeClient *handshakeClient, int clientIdx, 
+int numClients, ChunkedDataFrame *cdf)
 {
     int chunkSize = 5;
     // long totRows = 28229622;
@@ -27,44 +28,7 @@ void EmbeddedPythonController::AsynchStreamDataToPython(HandShakeClient *handsha
         if (clientNum == clientIdx)
         {
             std::cout << "Sending chunk " << clientNum << std::endl;
-
-            // Create example data: two columns, one numeric and one string
-            std::vector<std::pair<std::string, std::vector<std::variant<double, int64_t, std::string>>>> data;
-
-            for (size_t i = 0; i < columnNames.size(); i++)
-            {
-                std::string name = columnNames[i];
-                char colType = columnTypes[i];
-                if(colType == 'd') {
-                    auto dateVecIn = std::get<std::vector<int64_t> *>(columnData[i]);
-                    std::vector<std::variant<double, int64_t,  std::string>> dateVecOut;
-                    for(int64_t i64 : *dateVecIn) {
-                        dateVecOut.push_back(i64);
-                    }
-                    data.push_back(name, dateVecOut);
-                }
-                else if (columnTypes[i] == 'f')
-                {
-                    auto doubleVecIn = std::get<std::vector<double> *>(columnData[i]);
-                    std::vector<std::variant<double, int64_t,  std::string>> doubleVecOut;
-                    for(double d : *doubleVecIn) {
-                        doubleVecOut.push_back(i64);
-                    }
-                    data.push_back(name, doubleVecOut);
-                }
-                else
-                {
-                    auto stringVecIn = std::get<std::vector<std::string> *>(columnData[i]);
-                    std::vector<std::variant<double, int64_t,  std::string>> stringVecOut;
-                    for(std::string s : *stringVecIn) {
-                        stringVecOut.push_back(s);
-                    }
-                    data.push_back(name, stringVecOut);
-                }
-            }
-            // Send the data
-            // std::string response = client.ProcessData(data);
-            handshakeClient->ProcessTable(data);
+            handshakeClient->ProcessData(cdf->columnData);
         }
         else
         {
@@ -77,41 +41,41 @@ void EmbeddedPythonController::AsynchStreamDataToPython(HandShakeClient *handsha
         }
     }
 
-    for (int i = 0; i < 1; i++)
-    {
-        // Generate 5000 random doubles
-        std::vector<double> doubles;
-        doubles.reserve(5000);
+    // for (int i = 0; i < 1; i++)
+    // {
+    //     // Generate 5000 random doubles
+    //     std::vector<double> doubles;
+    //     doubles.reserve(5000);
 
-        // Use random number generator for doubles between 0.0 and 100.0
-        std::random_device rd;
-        std::mt19937 gen(rd());
-        std::uniform_real_distribution<> dis(0.0, 100.0);
+    //     // Use random number generator for doubles between 0.0 and 100.0
+    //     std::random_device rd;
+    //     std::mt19937 gen(rd());
+    //     std::uniform_real_distribution<> dis(0.0, 100.0);
 
-        std::cout << "Generating 5000 random doubles..." << std::endl;
-        for (int i = 0; i < 5000; i++)
-        {
-            double dd = dis(gen);
-            // if(i < 2000)
-            //     dd = std::floor(dd);
-            doubles.push_back(dd);
-        }
+    //     std::cout << "Generating 5000 random doubles..." << std::endl;
+    //     for (int i = 0; i < 5000; i++)
+    //     {
+    //         double dd = dis(gen);
+    //         // if(i < 2000)
+    //         //     dd = std::floor(dd);
+    //         doubles.push_back(dd);
+    //     }
 
-        std::string dname = "mortage loan payment interest gain";
-        std::string sname = "txn_id scenario product_id load_id run_id";
-        std::cout << "Generating 5000 strings..." << std::endl;
-        std::vector<std::string> strings;
-        std::string choices[] = {"Broccoli", "Tomato", "Kiwi", "Kale", "Tomatillo"};
-        strings.reserve(5000);
-        for (int i = 0; i < 5000; i++)
-        {
-            strings.push_back(choices[std::rand() % 5]);
-        }
+    //     std::string dname = "mortage loan payment interest gain";
+    //     std::string sname = "txn_id scenario product_id load_id run_id";
+    //     std::cout << "Generating 5000 strings..." << std::endl;
+    //     std::vector<std::string> strings;
+    //     std::string choices[] = {"Broccoli", "Tomato", "Kiwi", "Kale", "Tomatillo"};
+    //     strings.reserve(5000);
+    //     for (int i = 0; i < 5000; i++)
+    //     {
+    //         strings.push_back(choices[std::rand() % 5]);
+    //     }
 
-        std::string reply = handshakeClient->SendArray(dname, doubles, sname, strings);
+    //     std::string reply = handshakeClient->SendArray(dname, doubles, sname, strings);
 
-        std::cout << "Client returned: " << reply << std::endl;
-    }
+    //     std::cout << "Client returned: " << reply << std::endl;
+    // }
 }
 
 void EmbeddedPythonController::TestClient(HandShakeClient *client, const std::string &client_name)

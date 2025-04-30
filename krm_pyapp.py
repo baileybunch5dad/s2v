@@ -90,6 +90,10 @@ class HandShakeServer(handshake_pb2_grpc.HandShakeServicer):
                     column_values.append(value.double_value)
                 elif value.HasField('string_value'):
                     column_values.append(value.string_value)
+                elif value.HasField('long_value'):
+                    l = value.long_value
+                    dt = datetime.fromtimestamp(l).strftime("%Y-%m-%d")
+                    column_values.append(dt)
                 else:
                     column_values.append(None)  # Handle empty values
             
@@ -97,7 +101,8 @@ class HandShakeServer(handshake_pb2_grpc.HandShakeServicer):
             data[column_name] = column_values
         
         # Create and return DataFrame
-        return pd.DataFrame(data)
+        pdf = pd.DataFrame(data)
+        return pdf
 
     def SendTable(self, request, context):
         dname: str = request.doublename
@@ -203,7 +208,7 @@ class HandShakeServer(handshake_pb2_grpc.HandShakeServicer):
                 doublevals: np.array = np.array(col.double_values.values, dtype=np.float64)
                 # print(doublevals)
                 dct[col.name] = doublevals
-            elif col.HasField('int64_values'):
+            elif col.HasField('long_values'):
                 # print("numeric columns")
                 dtvals: np.array = np.array(col.datetime_values.values, dtype=np.int64)
                 dtvals = dtvals.astype('datetime64[s]')
