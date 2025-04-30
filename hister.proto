@@ -1,0 +1,24 @@
+syntax = "proto3";
+
+package hister;
+
+// Define a structure with a name, an array of ints, and an array of doubles
+message DataStruct {
+    string name = 1;
+    repeated int32 int_array = 2;
+    repeated double double_array = 3;
+}
+
+// Message to hold multiple DataStruct entries
+message DataContainer {
+    repeated DataStruct structures = 1;
+}
+
+// gRPC service definition
+service DataService {
+    rpc SendData (DataContainer) returns (Response);
+}
+
+message Response {
+    string status = 1;
+}

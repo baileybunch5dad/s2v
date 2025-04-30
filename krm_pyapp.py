@@ -166,6 +166,36 @@ class HandShakeServer(handshake_pb2_grpc.HandShakeServicer):
             dd.add_many(histdata)
         return handshake_pb2.ArrayResponse(message="Array received successfully!")
 
+    def GetHistograms(self, request, context):
+        # allhists = []
+        v = []
+        for k,dd in self.hists.items():
+            name="Scenario#"+str(int(k))
+            rbins, rhist = dd.histogram(n_bins=10)
+            double_array_np = np.array(rbins, dtype=np.float64)
+            int_array_np = np.array(rhist, dtype=np.int32)
+            # print(f"{name=} {int_array_np=} {double_array_np=}")
+            d = handshake_pb2.SingleHistogram(name=name, int_array=int_array_np, double_array=double_array_np)
+            v.append(d)
+
+        # for i in range(4):
+        #     int_array_np = np.array(range(i+1,i+4))
+        #     double_array_np = np.linspace(i+1.1, i+4.1, num=3)
+        #     name = "Histogram#" + str(i)
+        #     d = handshake_pb2.SingleHistogram(name=name, int_array=int_array_np, double_array=double_array_np)
+        #     v.append(d)
+            
+        # for name,dd in self.hists.items():
+        #     bins, hist = dd.histogram(n_bins=10)
+        #     double_array = np.array(bins, dtype=np.float64)
+        #     int_array = np.array(hist, dtype=np.int32)
+        #     dstruct = handshake_pb2.SingleHistogram(name=name, int_array=int_array, double_array=double_array)
+        #     allhists.append(dstruct)
+        # response = handshake_pb2.MultipleHistograms(histograms=allhists)
+        response = handshake_pb2.MultipleHistograms(histograms=v)
+        return response
+
+
     def AggregateLocal(self, request, context):
         print(f"On {os.getpid()=} AggregateLocal")
         ports: np.array = np.array(request.ports, dtype=int)
@@ -176,14 +206,26 @@ class HandShakeServer(handshake_pb2_grpc.HandShakeServicer):
                 channel = grpc.insecure_channel(channelName)
                 stub = handshake_pb2_grpc.HandShakeStub(channel)
                 # print(f'Thread 0 aggregating its results with {channelName}')
-                otherThreadResults = stub.GetResults(handshake_pb2.GetResultsRequest(which_results=0))
-                print(f'Python thread 0 received this response from {channelName}')
-                dname: str = otherThreadResults.doublename
-                dvals: np.array = np.array(otherThreadResults.doublevalues, dtype=np.float64)
-                sname: str = otherThreadResults.stringname
-                svals: np.array = np.array(otherThreadResults.stringvalues, dtype=str)
-                df = pd.DataFrame({dname: dvals, sname: svals})
-                print(df.round(2))
+                request = handshake_pb2.GetHistogramsRequest(code=1)
+                otherThreadResults = stub.GetHistograms(request)
+                for h in otherThreadResults.histograms:
+                    print(f"Name: {h.name}")
+                    print(f"Hist: {list(h.int_array)}")
+                    print(f"Bins: {list(h.double_array)}")
+    #                 reponse = handshake_pb2.MultipleHistograms(=[
+    #     hister_pb2.DataStruct(name="Set1", int_array=[1, 2, 3], double_array=[1.1, 2.2, 3.3]),
+    #     hister_pb2.DataStruct(name="Set2", int_array=[4, 5, 6], double_array=[4.4, 5.5, 6.6]),
+    #     hister_pb2.DataStruct(name="Set3", int_array=[7, 8, 9], double_array=[7.7, 8.8, 9.9])
+    # ])
+
+    # response = stub.SendData(request)
+    #             print(f'Python thread 0 received this response from {channelName}')
+    #             dname: str = otherThreadResults.doublename
+    #             dvals: np.array = np.array(otherThreadResults.doublevalues, dtype=np.float64)
+    #             sname: str = otherThreadResults.stringname
+    #             svals: np.array = np.array(otherThreadResults.stringvalues, dtype=str)
+    #             df = pd.DataFrame({dname: dvals, sname: svals})
+    #             print(df.round(2))
         else:
             print('Thread 0 aggregating as sole thread')
         return handshake_pb2.AggregateLocalResponse(return_code=0)

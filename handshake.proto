@@ -4,6 +4,7 @@ package handshake;
 
 service HandShake {
   rpc ProcessData(Table) returns (StringResponse) {}
+  rpc GetHistograms(GetHistogramsRequest) returns (MultipleHistograms) {}
   rpc SendTable (StackedTable) returns (ArrayResponse) {}
   rpc AggregateLocal (AggregateLocalRequest) returns (AggregateLocalResponse) {}
   rpc AggregateGlobal (AggregateGlobalRequest) returns (AggregateGlobalResponse) {}
@@ -12,6 +13,26 @@ service HandShake {
   rpc Hello (HelloRequest) returns (HelloResponse) {}  
   // rpc SendDataFrame(DataFrame) returns (StringResponse) {}
 }
+
+message GetHistogramsRequest {
+  int32 code = 1;
+}
+
+// Define a structure with a name, an array of ints, and an array of doubles
+message SingleHistogram {
+  string name = 1;
+  repeated int32 int_array = 2;
+  repeated double double_array = 3;
+}
+
+// Message to hold multiple DataStruct entries
+message MultipleHistograms {
+  repeated SingleHistogram histograms = 1;
+}
+
+
+
+
 
 // Message containing an array with either strings or doubles, plus a name field
 message Column {

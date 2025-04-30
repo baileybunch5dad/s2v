@@ -42,6 +42,8 @@ int numClients, ChunkedDataFrame *cdf)
             double percentComplete = 100.*(totRowsRead)/((totRows+0.0)/numClients);
             std::chrono::duration<double> elapsed_seconds = cur_time - start_time;
             std::cout << "Thread " << threadIdStr << " processed " << totRowsRead << " rows, percent complete " << percentComplete << "% Elapsed " << elapsed_seconds.count() << " seconds." << std::endl;
+
+            break;
         }
         else
         {
