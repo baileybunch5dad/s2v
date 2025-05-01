@@ -67,7 +67,7 @@ class HandShakeServer(handshake_pb2_grpc.HandShakeServicer):
         if not self.printed:
             print(f"PID {os.getpid()} receiving frames like ")
             print(df)
-            # self.printed = True
+            self.printed = True
 
         grps = df.groupby(by=['scenario'])
         allkeys = []
@@ -83,8 +83,9 @@ class HandShakeServer(handshake_pb2_grpc.HandShakeServicer):
             histdata = grp['par_bal'].to_numpy()
             # print(f"On {os.getpid()=} adding {histdata[:3]}... to hist for {key=} ")
             allkeys.append(key)
-            dd.add_many(histdata)            
-        print(f"On {os.getpid()=} updated distributions for {allkeys[:5]}... ")
+            dd.add_many(histdata)    
+
+        # print(f"On {os.getpid()=} updated distributions for {allkeys[:5]}... ")
         
         # Perform processing on the dataframe
         # For this example, we'll just report some basic statistics
@@ -111,7 +112,10 @@ class HandShakeServer(handshake_pb2_grpc.HandShakeServicer):
                 column_values = list(column.string_array.v)
             elif column.HasField('long_array'):
                 ll = list(column.long_array.v)
-                column_values = [datetime.fromtimestamp(lv).strftime("%Y-%m-%d") for lv in ll]
+                lla = np.array(ll)
+                llat = lla.astype('datetime64[s]')
+                column_values = llat
+                # column_values = [datetime.fromtimestamp(lv).strftime("%Y-%m-%d") for lv in ll]
             else:
                 column_values = []
             
@@ -307,9 +311,11 @@ class HandShakeServer(handshake_pb2_grpc.HandShakeServicer):
         self.server.stop(grace=3)
         # sys.exit(0)
 
-def serve(port:int=50051, id: int=0):
+def serve_grpc_profiling(port:int=50051, id: int=0):
+    from py_grpc_profile.server.interceptor import ProfileInterceptor
     port = str(port)
-    server = grpc.server(futures.ThreadPoolExecutor(max_workers=10))
+    server = grpc.server(futures.ThreadPoolExecutor(max_workers=10),
+                         interceptors=[ProfileInterceptor()])
     hs = HandShakeServer()
     hs.setPortIdServer(port, id, server)
     handshake_pb2_grpc.add_HandShakeServicer_to_server(hs, server)
@@ -323,11 +329,29 @@ def serve(port:int=50051, id: int=0):
     # print("Stop event recieved, stopping")
     # server.stop(0)
 
+def serve(port: int=50051, id:int = 10):
+    port = str(port)
+    server = grpc.server(futures.ThreadPoolExecutor(max_workers=10))
+    hs = HandShakeServer()
+    hs.setPortIdServer(port, id, server)
+    handshake_pb2_grpc.add_HandShakeServicer_to_server(hs, server)
+    server.add_insecure_port("[::]:" + port)
+    server.start()
+    print(f"Server started, listening on {port} from {os.getpid()=}")
+    server.wait_for_termination()
+    # print("Waiting on stop event")    
+
+# Profile the function and save output to a file
+def serve_with_profiling(port:int=50051, id: int=0):
+    import cProfile
+    cProfile.runctx(f'serve({port},{id})', globals(), locals(), f'profile-{id}.out')
 
 if __name__ == "__main__":
     # logging.basicConfig( level=logging.INFO)
     processes = []
     for idx, port in enumerate(ports):
+        # process = multiprocessing.Process(target=serve_grpc_profiling, args=(port, idx), name="Server"+str(idx))
+        # process = multiprocessing.Process(target=serve_with_profiling, args=(port, idx), name="Server"+str(idx))
         process = multiprocessing.Process(target=serve, args=(port, idx), name="Server"+str(idx))
         process.start()
         processes.append(process)
