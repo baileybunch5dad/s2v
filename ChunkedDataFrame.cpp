@@ -16,19 +16,86 @@
 #include <memory>
 #include "ChunkedDataFrame.h"
 
-ChunkedDataFrame::ChunkedDataFrame(std::string &file_path)
+ChunkedDataFrame::ChunkedDataFrame(const std::vector<std::string> &v)
 {
-    file = std::ifstream(file_path);
-    if (!file.is_open())
+    // this->parquetFiles = v;
+    for (auto pf : v)
     {
-        std::cerr << "Failed to open the file: " << file_path << std::endl;
-        return;
+        std::cout << pf << std::endl;
+        this->parquetFiles.push_back(pf);
+        this->parquetCount = 0;
+    }
+    std::vector<std::string> new_strings = {
+        "run_id",
+        "cur_dt",
+        "val_dt",
+        "data_dt",
+        "scenario",
+        "txn_id",
+        "sec_id",
+        "prod_id",
+        "val_method",
+        "par_bal",
+        "mkt_val",
+        "mkt_val_pay",
+        "mkt_val_opt1",
+        "mkt_val_opt2",
+        "clean_price",
+        "avg_life",
+        "mod_duration",
+        "duration",
+        "convexity",
+        "stv",
+        "sem_mkt_val",
+        "dval_dr",
+        "bs_delta",
+        "bs_gamma",
+        "bs_vega",
+        "bs_theta",
+        "bs_rho",
+        "par_cpn",
+        "ref_name",
+        "rw_model",
+        "ptnl_exp",
+        "cr_exp",
+        "pd",
+        "lgd",
+        "rw",
+        "r_corr",
+        "m_mat",
+        "b_mat_adj",
+        "ccf",
+        "ead",
+        "rwa",
+        "capital",
+        "el",
+        "own_funds",
+        "jtd_pre_adj",
+        "jtd_post_adj",
+    };
+    for (auto colNm : new_strings)
+    {
+        columnNames.push_back(colNm);
     }
 
-    loadHeaders(file);
+    // loadHeaders(file);
     loadColumnTypes();
     allocateStorage();
 }
+
+// ChunkedDataFrame::ChunkedDataFrame(std::string &file_path)
+// {
+//     file = std::ifstream(file_path);
+//     if (!file.is_open())
+//     {
+//         std::cerr << "Failed to open the file: " << file_path << std::endl;
+//         return;
+//     }
+
+//     loadHeaders(file);
+//     loadColumnTypes();
+//     allocateStorage();
+// }
 
 // temporarily pre-assign rather than get dynamically
 void ChunkedDataFrame::loadColumnTypes()
@@ -90,20 +157,24 @@ void ChunkedDataFrame::allocateStorage()
     {
         columns.emplace_back();
         std::string name = columnNames[col];
-        SingleColumn variant_ptr {};
+        DynamicVector dynVec;
+        std::string type;
         if (columnTypes[col] == 'f')
         {
-            variant_ptr = new std::vector<double>{};
+            dynVec = std::vector<double>{};
+            type = "double";
         }
         else if (columnTypes[col] == 'c')
         {
-            variant_ptr = new std::vector<std::string>{};
+            dynVec = std::vector<std::string>{};
+            type = "string";
         }
         else if (columnTypes[col] == 'd')
         {
-            variant_ptr = new std::vector<int64_t>{};
+            dynVec = std::vector<int64_t>{};
+            type = "date32";
         }
-        columnData.push_back({name, variant_ptr});
+        columnData.push_back({SingleColumn(name, type, dynVec)});
     }
 }
 
@@ -111,25 +182,28 @@ void ChunkedDataFrame::clearData()
 {
     for (size_t col = 0; col < columnTypes.size(); col++)
     {
-        std::string name = columnData[col].first;
-        SingleColumn v = columnData[col].second;
+        DynamicVector v = columnData[col].values;
 
-        if (columnTypes[col] == 'f') {
-            std::vector<double>* dvp = std::get<std::vector<double>*>(v);
-            dvp->clear();
+        if (std::holds_alternative<std::vector<double>>(v))
+        {
+            std::vector<double> &dvp = std::get<std::vector<double>>(v);
+            dvp.clear();
         }
-        else if (columnTypes[col] == 'd') {
-            std::vector<int64_t>* ivp = std::get<std::vector<int64_t>*>(v);
-            ivp->clear();
+        else if (std::holds_alternative<std::vector<int32_t>>(v))
+        {
+            std::vector<int32_t> &ivp = std::get<std::vector<int32_t>>(v);
+            ivp.clear();
         }
-        else if (columnTypes[col] == 'c') {
-            std::vector<std::string>* svp = std::get<std::vector<std::string>*>(v);
-            svp->clear();
+        else if (std::holds_alternative<std::vector<int64_t>>(v))
+        {
+            std::vector<int64_t> &ivp = std::get<std::vector<int64_t>>(v);
+            ivp.clear();
         }
-        // else if (columnTypes[col] == 'c')
-        //     (std::get<std::vector<std::string>>(v))->clear();
-        // else if (columnTypes[col] == 'd')
-        //     (std::get<std::vector<int64_t>>(v)->clear();
+        else if (std::holds_alternative<std::vector<std::string>>(v))
+        {
+            std::vector<std::string> &svp = std::get<std::vector<std::string>>(v);
+            svp.clear();
+        }
         columns[col].clear();
     }
 }
@@ -247,37 +321,226 @@ int ChunkedDataFrame::readCsvIntoColumns(int maxRows)
     return row;
 }
 
+arrow::Status ChunkedDataFrame::doit(std::string &path_to_file, int &rowsPtr)
+{
+    arrow::MemoryPool *pool = arrow::default_memory_pool();
+    std::shared_ptr<arrow::io::RandomAccessFile> input;
+    ARROW_ASSIGN_OR_RAISE(input, arrow::io::ReadableFile::Open(path_to_file));
+
+    // Open Parquet file reader
+    std::unique_ptr<parquet::arrow::FileReader> arrow_reader;
+    ARROW_ASSIGN_OR_RAISE(arrow_reader, parquet::arrow::OpenFile(input, pool));
+
+    // Read entire file as a single Arrow table
+    std::shared_ptr<arrow::Table> table;
+    ARROW_RETURN_NOT_OK(arrow_reader->ReadTable(&table));
+
+    int num_columns = table->num_columns();
+    int num_rows = table->num_rows();
+    rowsPtr = num_rows;
+
+    // std::cout << "Table: " << table->name() << std::endl;
+    std::cout << "Number of columns: " << num_columns << std::endl;
+    std::cout << "Number of rows: " << num_rows << std::endl;
+    std::cout << std::endl;
+
+    columnData.clear();
+    for (int i = 0; i < num_columns; ++i)
+    {
+        int rowNum = 0;
+        std::shared_ptr<arrow::ChunkedArray> column = table->column(i);
+        std::string arrow_column_name = table->field(i)->name();
+        std::string arrow_column_type_name = column->type()->ToString();
+        std::cout << "Column " << i << ": " << arrow_column_name << " (" << arrow_column_type_name << ")" << std::endl;
+        // SingleColumn mv = columnData[i].second;
+        // std::string grpcName = columnData[i].first;
+        // std::cout << "grpc name " << grpcName << " grpcType " << columnTypes[i] << std::endl;
+
+        if (arrow_column_type_name == "string")
+        {
+            auto newVec = std::vector<std::string>{};
+            newVec.reserve(num_rows);
+            DynamicVector dv = newVec;
+            SingleColumn single_column(arrow_column_name, arrow_column_type_name, dv);
+            columnData.push_back(single_column);
+        }
+        else if (arrow_column_type_name == "date32" || arrow_column_type_name == "int32")
+        {
+            auto newVec = std::vector<int32_t>{};
+            newVec.reserve(num_rows);
+            DynamicVector dv = newVec;
+            SingleColumn single_column(arrow_column_name, arrow_column_type_name, dv);
+            columnData.push_back(single_column);
+        }
+        else if (arrow_column_type_name == "date64" || arrow_column_type_name == "int64")
+        {
+            auto newVec = std::vector<int64_t>{};
+            newVec.reserve(num_rows);
+            DynamicVector dv = newVec;
+            SingleColumn single_column(arrow_column_name, arrow_column_type_name, dv);
+            columnData.push_back(single_column);
+        }
+        else if (arrow_column_type_name == "double" || arrow_column_type_name == "float64")
+        {
+            auto newVec = std::vector<double>{};
+            newVec.reserve(num_rows);
+            DynamicVector dv = newVec;
+            SingleColumn single_column(arrow_column_name, arrow_column_type_name, dv);
+            columnData.push_back(single_column);
+        }
+
+        for (int j = 0; j < column->num_chunks(); ++j)
+        {
+            std::shared_ptr<arrow::Array> chunk = column->chunk(j);
+
+            auto arrowChunkType = chunk->type_id();
+            auto arrowChunkLen = chunk->length();
+
+            DynamicVector dvp = columnData[i].values;
+            if (arrowChunkType == arrow::Type::STRING)
+            {
+                auto arrow_string_array = std::static_pointer_cast<arrow::StringArray>(chunk);
+                std::vector<std::string> &stringVec = std::get<std::vector<std::string>>(dvp);
+                for (int k = 0; k < arrowChunkLen; k++)
+                {
+                    std::string arrow_val = arrow_string_array->GetString(k);
+                    stringVec[rowNum++] = arrow_val;
+                }
+            }
+            else if (arrowChunkType == arrow::Type::DATE32)
+            {
+                auto arrow_date_array = std::static_pointer_cast<arrow::Date32Array>(chunk);
+                std::vector<int32_t> &int32Vec = std::get<std::vector<int32_t>>(dvp);
+                for (int k = 0; k < arrowChunkLen; k++)
+                {
+                    int32_t arrow_val = arrow_date_array->Value(k);
+                    int32Vec[rowNum++] = arrow_val;
+                }
+            }
+            else if (arrowChunkType == arrow::Type::DOUBLE)
+            {
+                auto arrow_double_array = std::static_pointer_cast<arrow::DoubleArray>(chunk);
+                std::vector<double> &doubleVec = std::get<std::vector<double>>(dvp);
+                for (int k = 0; k < arrowChunkLen; k++)
+                {
+                    double d = arrow_double_array->Value(k);
+                    doubleVec[rowNum++] = d;
+                }
+            }
+            else if (arrowChunkType == arrow::Type::INT32)
+            {
+                auto arrow_int32_array = std::static_pointer_cast<arrow::Int32Array>(chunk);
+                std::vector<int32_t> &int32Vec = std::get<std::vector<int32_t>>(dvp);
+                for (int k = 0; k < arrowChunkLen; k++)
+                {
+                    int32_t arrow_val = arrow_int32_array->Value(k);
+                    int32Vec[rowNum++] = arrow_val;
+                }
+            }
+            else if (arrowChunkType == arrow::Type::INT64)
+            {
+                auto arrow_int64_array = std::static_pointer_cast<arrow::Int64Array>(chunk);
+                std::vector<int64_t> &int64Vec = std::get<std::vector<int64_t>>(dvp);
+                for (int k = 0; k < arrowChunkLen; k++)
+                {
+                    int64_t arrow_val = arrow_int64_array->Value(k);
+                    int64Vec[rowNum++] = arrow_val;
+                }
+            }
+            else
+            {
+                std::cerr << "Uknonw column type " << std::endl;
+            }
+        }
+    }
+    //                 std::cout << arrow_string_array->GetString(k) << " ";
+
+    //         }
+    //         for (int k = 0; k < chunk->length() && k < 3; ++k)
+    //         {
+    //             if (chunk->type_id() == arrow::Type::STRING)
+    //             {
+    //                 auto string_array = std::static_pointer_cast<arrow::StringArray>(chunk);
+    //                 std::cout << string_array->GetString(k) << " ";
+    //             }
+    //             else if (chunk->type_id() == arrow::Type::INT64)
+    //             {
+    //                 auto int64_array = std::static_pointer_cast<arrow::Int64Array>(chunk);
+    //                 std::cout << int64_array->Value(k) << " ";
+    //             }
+    //             else if (chunk->type_id() == arrow::Type::INT32)
+    //             {
+    //                 auto int32_array = std::static_pointer_cast<arrow::Int32Array>(chunk);
+    //                 std::cout << int32_array->Value(k) << " ";
+    //             }
+    //             else if (chunk->type_id() == arrow::Type::DOUBLE)
+    //             {
+    //                 auto double_array = std::static_pointer_cast<arrow::DoubleArray>(chunk);
+    //                 std::cout << double_array->Value(k) << " ";
+    //             }
+    //             else if (chunk->type_id() == arrow::Type::DATE32)
+    //             {
+    //                 auto date32_casted_array = std::static_pointer_cast<arrow::Date32Array>(chunk);
+    //                 std::cout << date32_casted_array->Value(k) << " ";
+    //             }
+    //         }
+    //     }
+    // }
+    return arrow::Status::OK();
+}
+
 int ChunkedDataFrame::readChunk(int maxRows)
 {
     clearData();
-    std::string line;
-    // Read the data lines
-    int row = readCsvIntoColumns(maxRows);
 
-    for (size_t colIndex = 0; colIndex < columnTypes.size(); colIndex++)
+    if (parquetFiles.size() > 0)
     {
-        std::string name = columnData[colIndex].first;
-        SingleColumn mv = columnData[colIndex].second;
-        if (columnTypes[colIndex] == 'd')
+        if (parquetCount >= parquetFiles.size())
+            return 0;
+
+        // Define the path to the Parquet file
+        std::string path_to_file = parquetFiles[parquetCount++];
+        int rows = 0;
+        arrow::Status status = doit(path_to_file, rows);
+        if (!status.ok())
         {
-            std::vector<int64_t>* dateVecPtr = std::get<std::vector<int64_t>*>(mv);
-            for (auto &cell : columns[colIndex])
-                dateVecPtr->emplace_back(parseDate(cell));
+            return 0;
         }
-        else if (columnTypes[colIndex] == 'f')
-        {
-            std::vector<double>* doubleVecPtr = std::get<std::vector<double>*>(mv);
-            for (auto &cell : columns[colIndex])
-                doubleVecPtr->emplace_back(parseDouble(cell));
-        }
-        else
-        {
-            std::vector<std::string>* stringVecPtr = std::get<std::vector<std::string>*>(mv);
-            for (auto &cell : columns[colIndex])
-                stringVecPtr->emplace_back(cell);
-        }
+        return rows;
     }
-    if (row < maxRows)
-        file.close();
-    return row;
-}
+    else
+    {
+
+        std::string line;
+        // Read the data lines
+        int row = readCsvIntoColumns(maxRows);
+
+        for (size_t colIndex = 0; colIndex < columnTypes.size(); colIndex++)
+        {
+            std::string name = columnData[colIndex].name;
+            DynamicVector dvp = columnData[colIndex].values;
+            if (columnTypes[colIndex] == 'd')
+            {
+                std::vector<int64_t> & dateVecPtr = std::get<std::vector<int64_t>>(dvp);
+                for (auto &cell : columns[colIndex])
+                    dateVecPtr.emplace_back(parseDate(cell));
+            }
+            else if (columnTypes[colIndex] == 'f')
+            {
+                std::vector<double> &doubleVecPtr = std::get<std::vector<double>>(dvp);
+                for (auto &cell : columns[colIndex])
+                    doubleVecPtr.emplace_back(parseDouble(cell));
+            }
+            else
+            {
+                std::vector<std::string> &stringVecPtr = std::get<std::vector<std::string>>(dvp);
+                for (auto &cell : columns[colIndex])
+                    stringVecPtr.emplace_back(cell);
+            }
+        }
+        if (row < maxRows)
+            file.close();
+        return row;
+    }
+    return (0);
+}q

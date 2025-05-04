@@ -26,7 +26,7 @@ int numClients, ChunkedDataFrame *cdf)
     std::string threadIdStr = ss.str();
     auto start_time = std::chrono::high_resolution_clock::now();
     int clientNum = 0;
-    int chunkSize = 5000;
+    int chunkSize = 50000;
     long totRows = 28229622;
     long totRowsRead = 0;
     for (int rowsRead = cdf->readChunk(chunkSize); rowsRead > 0; rowsRead = cdf->readChunk(chunkSize))
@@ -35,7 +35,8 @@ int numClients, ChunkedDataFrame *cdf)
         {
             totRowsRead += rowsRead;
 
-            handshakeClient->ProcessData(cdf->columnData);
+            const NamedColumns & columnsData = cdf->columnData;
+            // std::string resp = handshakeClient->ProcessData(columnsData);
 
             // std::cout << "Sending chunk " << clientNum << std::endl;
             auto cur_time = std::chrono::high_resolution_clock::now();

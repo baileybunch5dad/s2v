@@ -1,17 +1,3 @@
-# Copyright 2015 gRPC authors.
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#     http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-"""The Python implementation of the GRPC helloworld.Greeter server."""
 
 from concurrent import futures
 # import logging
@@ -26,6 +12,7 @@ import threading
 import time
 import sys
 from DynamicDist import DynamicDist
+import tail_risk
 from datetime import datetime
 
 ports = [50051,50052,50053,50054]
@@ -60,8 +47,12 @@ class HandShakeServer(handshake_pb2_grpc.HandShakeServicer):
         # Prepare response
         response = handshake_pb2.StringResponse()
         
+        # print(request)
+
         # Convert protobuf to pandas DataFrame
         df = self._protobuf_to_dataframe(request)
+
+        # print(df)
         
         # Print the received data
         if not self.printed:
@@ -102,21 +93,40 @@ class HandShakeServer(handshake_pb2_grpc.HandShakeServicer):
         # Process each column
         for column in table.columns:
             column_name = column.name
+            column_type = column.type
             # column_values = []
             
+            if column_type == 'double':
+                column_values = list(column.double_array.v)
+            elif column_type == 'int32':
+                column_values = list(column.int32_array.v)
+            elif column_type == 'int64':
+                column_values = list(column.int64_array.v)
+            elif column_type == 'string':
+                column_values = list(column.string_array.v)
+            elif column_type == 'date32[day]':
+                clist = list(column.int32_array.v)
+                days_since_epoch = np.array(clist)
+                epoch = np.datetime64('1970-01-01')
+                column_values = epoch + days_since_epoch.astype('timedelta64[D]')
             # Process values in the column
             # for value in column.values:
-            if column.HasField('double_array'):
-                column_values = list(column.double_array.v)
-            elif column.HasField('string_array'):
-                column_values = list(column.string_array.v)
-            elif column.HasField('long_array'):
-                ll = list(column.long_array.v)
-                lla = np.array(ll)
-                llat = lla.astype('datetime64[s]')
-                column_values = llat
-                # column_values = [datetime.fromtimestamp(lv).strftime("%Y-%m-%d") for lv in ll]
+            # if column.HasField('double_array'):
+            #     column_values = list(column.double_array.v)
+            # elif column.HasField('string_array'):
+            #     column_values = list(column.string_array.v)
+            # elif column.HasField('int32_array'):
+            #     column_values = list(column.int32_array.v)
+            # elif column.HasField('int64_array'):
+            #     column_values = list(column.int64_array.v)
+            # elif column.HasField('long_array'):
+            #     ll = list(column.long_array.v)
+            #     lla = np.array(ll)
+            #     llat = lla.astype('datetime64[s]')
+            #     column_values = llat
+            #     # column_values = [datetime.fromtimestamp(lv).strftime("%Y-%m-%d") for lv in ll]
             else:
+                print(f"unknown column type {column_type}")
                 column_values = []
             
             # Add the column to our data dictionary
@@ -175,7 +185,7 @@ class HandShakeServer(handshake_pb2_grpc.HandShakeServicer):
         v = []
         for k,dd in self.hists.items():
             name="Scenario#"+str(int(k))
-            rbins, rhist = dd.histogram(n_bins=10)
+            rbins, rhist = dd.histogram(n_bins=100)
             double_array_np = np.array(rbins, dtype=np.float64)
             int_array_np = np.array(rhist, dtype=np.int32)
             # print(f"{name=} {int_array_np=} {double_array_np=}")
@@ -213,9 +223,15 @@ class HandShakeServer(handshake_pb2_grpc.HandShakeServicer):
                 request = handshake_pb2.GetHistogramsRequest(code=1)
                 otherThreadResults = stub.GetHistograms(request)
                 for h in otherThreadResults.histograms:
-                    print(f"Name: {h.name}")
-                    print(f"Hist: {list(h.int_array)}")
-                    print(f"Bins: {list(h.double_array)}")
+                    scenario = h.name
+                    scenario_bins = list(h.double_array)
+                    scenario_freqs = list(h.int_array)
+                    print(f"Name: {scenario}")
+                    print(f"Hist: {scenario_bins}")
+                    print(f"Bins: {scenario_freqs}")
+                # tr = tail_risk.tail_risk(scenario_bins, scenario_freqs, dist="GPD")
+                # print("Value at Risk and Expected Shortfall")
+                # print(tr)
     #                 reponse = handshake_pb2.MultipleHistograms(=[
     #     hister_pb2.DataStruct(name="Set1", int_array=[1, 2, 3], double_array=[1.1, 2.2, 3.3]),
     #     hister_pb2.DataStruct(name="Set2", int_array=[4, 5, 6], double_array=[4.4, 5.5, 6.6]),
@@ -311,11 +327,15 @@ class HandShakeServer(handshake_pb2_grpc.HandShakeServicer):
         self.server.stop(grace=3)
         # sys.exit(0)
 
-def serve_grpc_profiling(port:int=50051, id: int=0):
-    from py_grpc_profile.server.interceptor import ProfileInterceptor
+def serve_memory(port: int=50051, id:int = 10):
+    import tracemalloc
+    tracemalloc.start()
     port = str(port)
-    server = grpc.server(futures.ThreadPoolExecutor(max_workers=10),
-                         interceptors=[ProfileInterceptor()])
+    big_msg_options = [
+        ("grpc.max_send_message_length", 10 * 1024 * 1024),  # 10MB
+        ("grpc.max_receive_message_length", 1024 * 1024 * 1024)  # 1GB
+    ]
+    server = grpc.server(futures.ThreadPoolExecutor(max_workers=10), options=big_msg_options)
     hs = HandShakeServer()
     hs.setPortIdServer(port, id, server)
     handshake_pb2_grpc.add_HandShakeServicer_to_server(hs, server)
@@ -323,15 +343,14 @@ def serve_grpc_profiling(port:int=50051, id: int=0):
     server.start()
     print(f"Server started, listening on {port} from {os.getpid()=}")
     server.wait_for_termination()
-    # print("Waiting on stop event")
-    # server_servicer = server._state.generic_handlers[0].service.servicer
-    # server_servicer.server_stop_event.wait()
-    # print("Stop event recieved, stopping")
-    # server.stop(0)
 
 def serve(port: int=50051, id:int = 10):
     port = str(port)
-    server = grpc.server(futures.ThreadPoolExecutor(max_workers=10))
+    big_msg_options = [
+        ("grpc.max_send_message_length", 10 * 1024 * 1024),  # 10MB
+        ("grpc.max_receive_message_length", 1024 * 1024 * 1024)  # 1GB
+    ]
+    server = grpc.server(futures.ThreadPoolExecutor(max_workers=10), options=big_msg_options)
     hs = HandShakeServer()
     hs.setPortIdServer(port, id, server)
     handshake_pb2_grpc.add_HandShakeServicer_to_server(hs, server)

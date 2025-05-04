@@ -18,39 +18,51 @@ std::string HandShakeClient::ProcessData(const NamedColumns &columnsData)
     // Table *table = request.mutable_data();
 
     // Fill the table with columns
-    for (const auto &columnData : columnsData)
+    for (const auto &singleColumn : columnsData)
     {
         Column *column = request.add_columns();
-        std::string name = columnData.first;
+
+        std::string name = singleColumn.name;
         column->set_name(name);
 
         // Add values to the column
 
-        SingleColumn vec = columnData.second;
+        DynamicVector dynVec = singleColumn.values;
+        std::string type = singleColumn.type;
+        column->set_type(type);
 
-        if (std::holds_alternative<std::vector<double> *>(vec))
+        if (type == "double") // std::holds_alternative<std::vector<int32_t> *>(vec) is equivalent
         {
-            std::vector<double> *dv = std::get<std::vector<double> *>(vec);
+            const std::vector<double> &dv = std::get<std::vector<double>>(dynVec);
             DoubleArray *double_array = column->mutable_double_array();
-            for (auto d : *dv)
+            for (double d : dv)
             {
                 double_array->add_v(d);
             }
         }
-        else if (std::holds_alternative<std::vector<int64_t> *>(vec))
+        else if (type == "int32" || type == "date32")
         {
-            std::vector<int64_t> *iv = std::get<std::vector<int64_t> *>(vec);
-            LongArray *long_array = column->mutable_long_array();
-            for (auto i : *iv)
+            const std::vector<int32_t> &iv = std::get<std::vector<int32_t>>(dynVec);
+            Int32Array *int32_array = column->mutable_int32_array();
+            for (int32_t i : iv)
             {
-                long_array->add_v(i);
+                int32_array->add_v(i);
             }
         }
-        else if (std::holds_alternative<std::vector<std::string> *>(vec))
+        else if (type == "int64" || type == "date64")
         {
-            std::vector<std::string> *sv = std::get<std::vector<std::string> *>(vec);
+            const std::vector<int64_t> &iv = std::get<std::vector<int64_t>>(dynVec);
+            Int64Array *int64_array = column->mutable_int64_array();
+            for (int64_t i : iv)
+            {
+                int64_array->add_v(i);
+            }
+        }
+        else if (type == "string")
+        {
+            const std::vector<std::string> &sv = std::get<std::vector<std::string>>(dynVec);
             StringArray *string_array = column->mutable_string_array();
-            for (auto s : *sv)
+            for (auto s : sv)
             {
                 string_array->add_v(s);
             }

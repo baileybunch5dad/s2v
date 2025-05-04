@@ -107,6 +107,8 @@ CBLDSTUFF = \
 	/home/chris/.local/lib64/libabsl_demangle_rust.a  \
 	/home/chris/.local/lib64/libabsl_decode_rust_punycode.a  \
 	/home/chris/.local/lib64/libabsl_utf8_for_code_point.a \
+	-lstdc++fs \
+	-lparquet -larrow \
 	`python3.11-config --ldflags --embed`
 
 all: krm_capp krm_pyapp	data_client data_server
@@ -132,7 +134,8 @@ DataServiceClient.o: DataServiceClient.cpp dataservice.pb.cc
 data_server: data_service.proto
 
 clean:
-	rm handshake.g* handshake_* krm_capp.o krm_capp HandShakeClient.o ChunkedDataFrame.o
+	rm handshake.g* handshake_* krm_capp 
+	rm *.o
 
 handshake_pb2_grpc.py: handshake.proto
 	protoc  -I . --python_out=. --grpc_out=. --plugin=protoc-gen-grpc=`which grpc_python_plugin` handshake.proto 
@@ -157,8 +160,14 @@ HandShakeClient.o: HandShakeClient.cpp
 krm_capp.o: krm_capp.cpp handshake.grpc.pb.cc 
 	$(CXX)  $(CXXFLAGS) -pthread -c krm_capp.cpp
 
-krm_capp: krm_capp.o  handshake.grpc.pb.o HandShakeClient.o ChunkedDataFrame.o EmbeddedPythonController.o
+	# HandShakeClient.o ChunkedDataFrame.o EmbeddedPythonController.o \
+	# handshake.grpc.pb.o handshake.pb.o 
+	# HandShakeClient.o ChunkedDataFrame.o EmbeddedPythonController.o
+	#
+
+krm_capp: krm_capp.o  handshake.grpc.pb.o 
 	g++ krm_capp.o \
-	HandShakeClient.o ChunkedDataFrame.o EmbeddedPythonController.o \
-	handshake.grpc.pb.o handshake.pb.o -o krm_capp \
+	handshake.grpc.pb.o \
+	handshake.pb.o \
+	-o krm_capp \
 	$(CBLDSTUFF)

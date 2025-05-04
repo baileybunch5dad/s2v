@@ -1,32 +1,294 @@
 #include <Python.h>
+#include "absl/flags/flag.h"
+#include "absl/flags/parse.h"
+#include <ctime>
 #include <grpcpp/grpcpp.h>
 #include <iostream>
 #include <memory>
 #include <string>
 #include <thread>
-#include "absl/flags/flag.h"
-#include "absl/flags/parse.h"
 
 #include "handshake.grpc.pb.h"
-#include "HandShakeClient.h"
-#include "EmbeddedPythonController.h"
-#include "ChunkedDataFrame.h"
+#include <filesystem>
 
-// const std::string server="cldlgn01.unx.sas.com";
+// Arrow and Parquet headers
+#include <arrow/api.h>
+#include <arrow/io/api.h>
+#include <arrow/result.h>
+#include <arrow/status.h>
+#include <parquet/arrow/reader.h>
+#include <parquet/exception.h>
+// #include <arrow/array/array_view.h>
+#include <arrow/type_fwd.h>
 
-// ABSL_FLAG(std::string, target, server + ":" + "50051", "Server address");
+#include <grpcpp/grpcpp.h>
+#include <arrow/api.h>
+#include <arrow/io/memory.h>
+#include <arrow/ipc/writer.h>
 
-void RunClient(EmbeddedPythonController *epc, HandShakeClient *client, const std::string &client_name, int clientIdx, int numClients)
+namespace fs = std::filesystem;
+
+#if __cplusplus >= 201703L // C++17 and later
+#include <string_view>
+
+static bool ends_with(std::string_view str, std::string_view suffix)
 {
-    std::string csv_file = "/mnt/e/shared/mv_out.csv";
-    ChunkedDataFrame cdf(csv_file);
-
-    epc->AsynchStreamDataToPython(client, clientIdx, numClients, &cdf);
+    return str.size() >= suffix.size() && str.compare(str.size() - suffix.size(), suffix.size(), suffix) == 0;
 }
 
-void startPipe(EmbeddedPythonController *epc, std::string pyfname, int argc, char **argv, std::vector<int> ports)
+static bool starts_with(std::string_view str, std::string_view prefix)
 {
-    epc->startPythonProcessPipe(pyfname, argc, argv, ports);
+    return str.size() >= prefix.size() && str.compare(0, prefix.size(), prefix) == 0;
+}
+#endif // C++17
+
+class HandShakeClient
+{
+private:
+    std::unique_ptr<handshake::HandShake::Stub> stub_;
+
+public:
+    HandShakeClient(std::shared_ptr<grpc::Channel> channel)
+        : stub_(handshake::HandShake::NewStub(channel)) {}
+
+    std::string ProcessData(std::shared_ptr<arrow::Table> &table)
+    {
+        handshake::Table request{};
+
+        int num_columns = table->num_columns();
+        int num_rows = table->num_rows();
+
+        // std::cout << "Table: " << table->name() << std::endl;
+        // std::cout << "Number of columns: " << num_columns << std::endl;
+        // std::cout << "Number of rows: " << num_rows << std::endl;
+        // std::cout << std::endl;
+
+        for (int i = 0; i < num_columns; ++i)
+        {
+            std::shared_ptr<arrow::ChunkedArray> arrow_column = table->column(i);
+            std::string arrow_column_name = table->field(i)->name();
+            std::string arrow_column_type_name = arrow_column->type()->ToString();
+            // std::cout << "Column " << i << " name='" << arrow_column_name << "' type='" << arrow_column_type_name << "'" << std::endl;
+            // SingleColumn mv = columnData[i].second;
+            // std::string grpcName = columnData[i].first;
+            // std::cout << "grpc name " << grpcName << " grpcType " << columnTypes[i] << std::endl;
+
+            handshake::Column *handshake_column = request.add_columns();
+            handshake_column->set_name(arrow_column_name);
+            handshake_column->set_type(arrow_column_type_name);
+
+            for (int j = 0; j < arrow_column->num_chunks(); ++j)
+            {
+                std::shared_ptr<arrow::Array> chunk = arrow_column->chunk(j);
+
+                auto arrowChunkType = chunk->type_id();
+                auto arrowChunkLen = chunk->length();
+                // if(arrowChunkLen > 3) arrowChunkLen = 3; // temp for debugging
+
+                if (arrowChunkType == arrow::Type::STRING)
+                {
+                    auto arrow_string_array = std::static_pointer_cast<arrow::StringArray>(chunk);
+                    handshake::StringArray *handshake_string_array = handshake_column->mutable_string_array();
+                    for (int k = 0; k < arrowChunkLen; k++)
+                    {
+                        std::string arrow_val = arrow_string_array->GetString(k);
+                        handshake_string_array->add_v(arrow_val);
+                    }
+                }
+                else if (arrowChunkType == arrow::Type::DOUBLE)
+                {
+                    auto arrow_double_array = std::static_pointer_cast<arrow::DoubleArray>(chunk);
+                    handshake::DoubleArray *handshake_double_array = handshake_column->mutable_double_array();
+                    for (int k = 0; k < arrowChunkLen; k++)
+                    {
+                        double arrow_val = arrow_double_array->Value(k);
+                        handshake_double_array->add_v(arrow_val);
+                    }
+                }
+                else if (arrowChunkType == arrow::Type::DATE32)
+                {
+                    auto arrow_date_array = std::static_pointer_cast<arrow::Date32Array>(chunk);
+                    handshake::Int32Array *handshake_int32_array = handshake_column->mutable_int32_array();
+                    for (int k = 0; k < arrowChunkLen; k++)
+                    {
+                        int32_t arrow_val = arrow_date_array->Value(k);
+                        handshake_int32_array->add_v(arrow_val);
+                    }
+                }
+                else if (arrowChunkType == arrow::Type::INT32)
+                {
+                    auto arrow_int32_array = std::static_pointer_cast<arrow::Int32Array>(chunk);
+                    handshake::Int32Array *handshake_int32_array = handshake_column->mutable_int32_array();
+                    for (int k = 0; k < arrowChunkLen; k++)
+                    {
+                        int32_t arrow_val = arrow_int32_array->Value(k);
+                        handshake_int32_array->add_v(arrow_val);
+                    }
+                }
+                else if (arrowChunkType == arrow::Type::INT64)
+                {
+                    auto arrow_int64_array = std::static_pointer_cast<arrow::Int64Array>(chunk);
+                    handshake::Int64Array *handshake_int64_array = handshake_column->mutable_int64_array();
+                    for (int k = 0; k < arrowChunkLen; k++)
+                    {
+                        int32_t arrow_val = arrow_int64_array->Value(k);
+                        handshake_int64_array->add_v(arrow_val);
+                    }
+                }
+                else {
+                    std::cerr << "Unhandle type " << arrow_column_type_name << std::endl;
+                    exit(1);
+                }
+            }
+        }
+
+        // Prepare response
+        handshake::StringResponse response;
+
+        // Set up context
+        grpc::ClientContext context;
+
+        // Call RPC
+        grpc::Status status = stub_->ProcessData(&context, request, &response);
+
+        // Check status
+        if (status.ok())
+        {
+            return response.status();
+        }
+        else
+        {
+            std::cout << "RPC failed: " << status.error_message() << std::endl;
+            return "RPC failed: " + status.error_message();
+        }
+    }
+    std::string Shutdown()
+    {
+        handshake::ShutdownRequest request;
+        handshake::ShutdownResponse response;
+        grpc::ClientContext context;
+
+        grpc::Status status = stub_->Shutdown(&context, request, &response);
+
+        if (status.ok())
+        {
+            return response.status();
+        }
+        else
+        {
+            std::cout << "Shutdown" << std::endl;
+            std::cout << status.error_code() << ": " << status.error_message()
+                      << std::endl;
+            return "RPC failed";
+        }
+    }
+
+    std::string Hello(std::string instr)
+    {
+        handshake::HelloRequest request;
+        handshake::HelloResponse response;
+        grpc::ClientContext context;
+
+        std::cout << "invoke Hello(" << instr << ")" << std::endl;
+        request.set_name(instr.c_str());
+        grpc::Status status = stub_->Hello(&context, request, &response);
+        std::cout << "Status ok " << status.ok() << std::endl;
+        if (status.ok())
+        {
+            return response.reply();
+        }
+        else
+        {
+            std::cout << "Hello failure" << std::endl;
+            std::cout << status.error_code() << ": " << status.error_message()
+                      << std::endl;
+            return "RPC failed";
+        }
+    }
+
+    int AggregateLocal(const std::vector<int> &ports)
+    {
+        handshake::AggregateLocalRequest request;
+        for (auto p : ports)
+        {
+            request.add_ports(p);
+        }
+
+        // Call the Aggregate RPC
+        handshake::AggregateLocalResponse response;
+        grpc::ClientContext context;
+        grpc::Status status = stub_->AggregateLocal(&context, request, &response);
+
+        // Handle the response
+        if (status.ok())
+        {
+            return response.return_code();
+        }
+        else
+        {
+            std::cout << "AggregateLocal failure" << std::endl;
+            std::cout << status.error_code() << ": " << status.error_message()
+                      << std::endl;
+            return (-1);
+        }
+    }
+
+    int AggregateGlobal(const std::vector<int> &ports, const std::vector<std::string> &servers)
+    {
+        handshake::AggregateGlobalRequest request;
+        for (int p : ports)
+        {
+            request.add_ports(p);
+        }
+        for (std::string s : servers)
+        {
+            request.add_servers(s);
+        }
+
+        // Call the Aggregate RPC
+        handshake::AggregateGlobalResponse response;
+        grpc::ClientContext context;
+        grpc::Status status = stub_->AggregateGlobal(&context, request, &response);
+
+        // Handle the response
+        if (status.ok())
+        {
+            return response.return_code();
+        }
+        else
+        {
+            std::cout << "AggregateGlobal failure" << std::endl;
+            std::cout << status.error_code() << ": " << status.error_message()
+                      << std::endl;
+            return (-1);
+        }
+    }
+};
+
+void WaitForChannelReady(const std::shared_ptr<grpc::Channel> &channel, int max_attempts = 10, int delay_ms = 500)
+{
+    for (int i = 0; i < max_attempts; ++i)
+    {
+        // Get the current channel state
+        auto state = channel->GetState(true);
+
+        // Check if the channel is ready
+        if (state == GRPC_CHANNEL_READY)
+        {
+            std::cout << "Channel is ready!" << std::endl;
+            return;
+        }
+        else
+        {
+            std::cout << "Waiting for channel to be ready. Current state: " << state << std::endl;
+        }
+
+        // Sleep for the specified delay
+        std::this_thread::sleep_for(std::chrono::milliseconds(delay_ms));
+    }
+
+    std::cerr << "Channel did not become ready within the timeout period." << std::endl;
+    exit(1);
 }
 
 std::vector<int> stringToArrayOfInts(const std::string &inputString)
@@ -81,19 +343,97 @@ std::vector<std::string> stringToVector(const std::string &str)
     return result;
 }
 
-bool startswith(const std::string &s, const std::string &prfix)
-{
-    return (std::strncmp(s.c_str(), prfix.c_str(), prfix.size()) == 0);
-}
 std::string parmval(const std::string &s, const std::string &prfix)
 {
     return s.substr(prfix.size() + 1);
 }
+
+std::vector<std::string> getListofParquetFiles()
+{
+    std::string path = "/mnt/e/shared/parquet"; // Specify the directory path
+    std::vector<std::string> dirList;
+
+    try
+    {
+        for (const auto &entry : fs::directory_iterator(path))
+        {
+            std::string fname = entry.path().string();
+            if (ends_with(fname, ".parquet"))
+                dirList.push_back(fname);
+        }
+    }
+    catch (const fs::filesystem_error &e)
+    {
+        std::cerr << "Error: " << e.what() << std::endl;
+        exit(1);
+    }
+    return dirList;
+}
+
+std::vector<std::vector<std::string>> chopList(const std::vector<std::string> &dirList, int numPieces)
+{
+    std::vector<std::vector<std::string>> cList;
+
+    for (int i = 0; i < numPieces; i++)
+    {
+        cList.push_back(std::vector<std::string>{});
+    }
+
+    int which = 0;
+    for (auto s : dirList)
+    {
+        cList[which].push_back(s);
+        which++;
+        if (which == numPieces)
+        {
+            which = 0;
+        }
+    }
+    return cList;
+}
+
+arrow::Status doit(const std::string &path_to_file, HandShakeClient *client)
+{
+
+    arrow::MemoryPool *pool = arrow::default_memory_pool();
+    std::shared_ptr<arrow::io::RandomAccessFile> input;
+    ARROW_ASSIGN_OR_RAISE(input, arrow::io::ReadableFile::Open(path_to_file));
+
+    // Open Parquet file reader
+    std::unique_ptr<parquet::arrow::FileReader> arrow_reader;
+    ARROW_ASSIGN_OR_RAISE(arrow_reader, parquet::arrow::OpenFile(input, pool));
+
+    // Read entire file as a single Arrow table
+    std::shared_ptr<arrow::Table> table;
+    ARROW_RETURN_NOT_OK(arrow_reader->ReadTable(&table));
+
+    std::string s = client->ProcessData(table);
+
+    std::cout << s << std::endl;
+
+    return arrow::Status::OK();
+}
+void RunClient(HandShakeClient *client, const std::vector<std::string> &fList, const std::string &client_name, int clientIdx, int numClients)
+{
+      std::thread::id threadId = std::this_thread::get_id();
+  std::stringstream ss;
+  ss << threadId;
+  std::string threadIdString = ss.str();
+    for (std::string fileName : fList)
+    {
+        std::cout << "Thread " << threadId << " grpcing arrow in " << fileName << std::endl;
+        arrow::Status status = doit(fileName, client);
+        if(!status.ok()) {
+            std::cout << "status " << status.ToString() << std::endl;
+            exit(1);
+        }
+    }
+}
 int main(int argc, char **argv)
 {
-    EmbeddedPythonController *epc = new EmbeddedPythonController();
+    // EmbeddedPythonController *epc = new EmbeddedPythonController();
     std::string server = "localhost";
-    bool inprocessPython = false;
+    // bool inprocessPython = false;
     std::vector<int> ports = {50051, 50052, 50053, 50054};
     std::vector<std::string> externalServers = {};
     bool shutdown = false;
@@ -102,23 +442,23 @@ int main(int argc, char **argv)
     {
         std::string s = argv[i];
         std::string o = "--server";
-        if (startswith(s, "--server"))
+        if (starts_with(s, "--server"))
         {
             server = parmval(s, "--server");
         }
-        if (startswith(s, "--embedded"))
-        {
-            inprocessPython = true;
-        }
-        if (startswith(s, "--ports"))
+        // if (starts_with(s, "--embedded"))
+        // {
+        //     inprocessPython = true;
+        // }
+        if (starts_with(s, "--ports"))
         {
             ports = stringToArrayOfInts(parmval(s, "--ports"));
         }
-        if (startswith(s, "--externalServers"))
+        if (starts_with(s, "--externalServers"))
         {
             externalServers = stringToVector(parmval(s, "--externalServers"));
         }
-        if (startswith(s, "--shutdown"))
+        if (starts_with(s, "--shutdown"))
         {
             shutdown = true;
         }
@@ -130,17 +470,17 @@ int main(int argc, char **argv)
     }
     std::cout << std::endl;
     std::cout << "Server " << server << std::endl;
-    std::thread pythrd = {};
-    if (inprocessPython)
-    {
-        std::cout << "Launching inprocess Python";
-        pythrd = std::thread(startPipe, epc, "krm_pyapp.py", argc, argv, ports);
-        sleep(1);
-    }
-    else
-    {
-        std::cout << "Attaching to remote out of process aggregation server " << std::endl;
-    }
+    // std::thread pythrd = {};
+    // if (inprocessPython)
+    // {
+    //     std::cout << "Launching inprocess Python";
+    //     pythrd = std::thread(startPipe, epc, "krm_pyapp.py", argc, argv, ports);
+    //     sleep(1);
+    // }
+    // else
+    // {
+    //     std::cout << "Attaching to remote out of process aggregation server " << std::endl;
+    // }
 
     std::cout << "Starting multi-threaded C++ krm_capp talking to multiprocess krm_pyapp" << std::endl;
     // List of server addresses
@@ -154,10 +494,14 @@ int main(int argc, char **argv)
     // Launch threads for each server
     for (size_t i = 0; i < server_addresses.size(); ++i)
     {
+        grpc::ChannelArguments channel_args;
+        channel_args.SetMaxSendMessageSize(1024 * 1024 * 1024);    // 1GB
+        channel_args.SetMaxReceiveMessageSize(1024 * 1024 * 1024); // 1GB
         std::string addr = server_addresses[i];
         std::cout << "Creating channel for " << addr << std::endl;
-        auto channel = grpc::CreateChannel(addr, grpc::InsecureChannelCredentials());
-        epc->WaitForChannelReady(channel);
+        auto channel = grpc::CreateCustomChannel(addr, grpc::InsecureChannelCredentials(), channel_args);
+
+        WaitForChannelReady(channel);
         HandShakeClient *client = new HandShakeClient(channel);
         clients.emplace_back(client);
     }
@@ -166,18 +510,26 @@ int main(int argc, char **argv)
 
     // std::this_thread::sleep_for(std::chrono::milliseconds(2000)); // ms
 
+    auto dirList = getListofParquetFiles();
+    auto clientDirList = chopList(dirList, server_addresses.size());
+
     for (size_t i = 0; i < server_addresses.size(); ++i)
     {
         auto client = clients[i];
         std::string client_name = "Client" + std::to_string(i + 1);
-        epc->TestClient(client, client_name);
+        std::string tmstr = client->Hello(client_name);
+        if (std::strncmp(tmstr.c_str(), "RPC failed", 10) == 0)
+        {
+            std::cerr << "Aborting, cannot invoke remote procedure calls" << std::endl;
+            exit(1);
+        }
     }
 
     for (size_t i = 0; i < server_addresses.size(); ++i)
     {
         auto client = clients[i];
         std::string client_name = "Client" + std::to_string(i + 1);
-        threads.emplace_back(RunClient, epc, client, client_name, i, int(server_addresses.size()));
+        threads.emplace_back(RunClient, client, clientDirList[i], client_name, i, int(server_addresses.size()));
     }
 
     // Join all threads, letting the asynch threads flood the python listeners
@@ -202,10 +554,10 @@ int main(int argc, char **argv)
         }
     }
 
-    if (pythrd.joinable())
-    {
-        pythrd.join();
-    }
+    // if (pythrd.joinable())
+    // {
+    //     pythrd.join();
+    // }
 
     exit(0);
 

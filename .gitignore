@@ -1,3 +1,25 @@
+# protoc generated files
+*_pb2_grpc.py
+*_pb2.py
+*.grpc.pb.cc
+*.pb.cc
+*.grpc.pb.h
+*.pb.h
+
+# build directory
+build/
+# Python cache
+__pycache__/
+
+# vscode internal files
+.vscode/
+
+# cmake build directory
+.build/
+
+# output file
+krm_capp
+
 # Prerequisites
 *.d
 
