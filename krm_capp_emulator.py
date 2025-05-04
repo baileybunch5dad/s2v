@@ -33,7 +33,7 @@ class HandShakeClient:
         """Load a Parquet file into a PyArrow Table and send it to the server."""
         try:
             # Read the Parquet file into a PyArrow Table
-            print(f"Loading Parquet file: {parquet_file}")
+            print(f"PID {os.getpid()} Loading Parquet file: {parquet_file}")
             table = pq.read_table(parquet_file)
             return self.send_table(table)
         except Exception as e:
@@ -56,7 +56,7 @@ class HandShakeClient:
             )
             
             # Send the request
-            print(f"Sending Arrow Table with {table.num_rows} rows and {table.num_columns} columns")
+            print(f"PID {os.getpid()} sending Arrow Table with {table.num_rows} rows and {table.num_columns} columns")
             response = self.stub.ProcessArrowStream(request)
             
             if response.success:
@@ -122,7 +122,7 @@ def capp_thread(server_address, flist):
     client.say_hello("KRM_CAPP_EMULATOR")
     
     for parquet_file in flist:
-        print(f"Processs {os.getpid()} sending arrow stream from {parquet_file}")
+        # print(f"Processs {os.getpid()} sending arrow stream from {parquet_file}")
         client.send_table_from_parquet(parquet_file)
         
 
