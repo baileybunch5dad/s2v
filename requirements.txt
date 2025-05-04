@@ -11,3 +11,4 @@ statsmodels
 grpcio
 grpcio-tools
 googleapis-common-protos
+pyarrow

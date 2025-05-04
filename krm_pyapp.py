@@ -13,6 +13,8 @@ import time
 import sys
 from DynamicDist import DynamicDist
 import tail_risk
+import pyarrow as pa
+import io
 from datetime import datetime
 
 ports = [50051,50052,50053,50054]
@@ -40,6 +42,51 @@ class HandShakeServer(handshake_pb2_grpc.HandShakeServicer):
         self.hists = {}
         self.printed = False
 
+    def ProcessArrowStream(self, request, context):
+        """Receives a serialized Arrow table, deserializes it, and processes it."""
+        try:
+            # Get the serialized bytes
+            serialized_table = request.serialized_table
+    
+            # Deserialize the Arrow table
+            reader = pa.ipc.open_stream(io.BytesIO(serialized_table))
+
+            arrow_table = reader.read_all()
+
+            df = arrow_table.to_pandas()
+
+            if not self.printed:
+                print(df)
+                self.printed = True
+
+            grps = df.groupby(by=['scenario'])
+            allkeys = []
+            for grpid, grp in grps:
+                # print(f"On {os.getpid()=} adding {grpid=}")
+                # print(grp)
+                key = grpid[0]
+                if key not in self.hists.keys():
+                    dd = DynamicDist()
+                    self.hists[key] = dd
+                else:
+                    dd = self.hists[key]
+                histdata = grp['par_bal'].to_numpy()
+                # print(f"On {os.getpid()=} adding {histdata[:3]}... to hist for {key=} ")
+                allkeys.append(key)
+                dd.add_many(histdata)    
+
+           
+            return handshake_pb2.ArrowTableResponse(
+                success=True,
+                message=f"Successfully received table with {arrow_table.num_rows} rows and {arrow_table.num_columns} columns"
+            )
+        except Exception as e:
+            # Return error response
+            return handshake_pb2.ArrowTableResponse(
+                success=False,
+                message=f"Error processing Arrow table: {str(e)}"
+               )
+        
     def ProcessData(self, request, context):
         """
         Process incoming data from the C++ client

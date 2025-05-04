@@ -3,6 +3,7 @@ syntax = "proto3";
 package handshake;
 
 service HandShake {
+  rpc ProcessArrowStream(ArrowTableRequest) returns (ArrowTableResponse) {}
   rpc ProcessData(Table) returns (StringResponse) {}
   rpc GetHistograms(GetHistogramsRequest) returns (MultipleHistograms) {}
   rpc SendTable (StackedTable) returns (ArrayResponse) {}
@@ -12,6 +13,15 @@ service HandShake {
   rpc Shutdown( ShutdownRequest) returns (ShutdownResponse) {}
   rpc Hello (HelloRequest) returns (HelloResponse) {}  
   // rpc SendDataFrame(DataFrame) returns (StringResponse) {}
+}
+
+message ArrowTableRequest {
+  bytes serialized_table = 1;
+}
+
+message ArrowTableResponse {
+  bool success = 1;
+  string message = 2;
 }
 
 message GetHistogramsRequest {

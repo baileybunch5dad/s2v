@@ -47,16 +47,144 @@ class HandShakeClient
 private:
     std::unique_ptr<handshake::HandShake::Stub> stub_;
 
+    // Simple function to serialize an Arrow Table to a Buffer
+    arrow::Result<std::shared_ptr<arrow::Buffer>> SerializeTableToBuffer(
+        const std::shared_ptr<arrow::Table> &table)
+    {
+
+        // Step 1: Create a BufferOutputStream to write to memory
+        ARROW_ASSIGN_OR_RAISE(auto buffer_stream, arrow::io::BufferOutputStream::Create());
+
+        // Step 2: Create IPC stream writer
+        ARROW_ASSIGN_OR_RAISE(auto writer,
+                              arrow::ipc::MakeStreamWriter(buffer_stream, table->schema()));
+
+        // Step 3: Write the table to the stream
+        ARROW_RETURN_NOT_OK(writer->WriteTable(*table));
+
+        // Step 4: Close the writer to complete serialization
+        ARROW_RETURN_NOT_OK(writer->Close());
+
+        // Step 5: Finish and return the buffer
+        return buffer_stream->Finish();
+    }
+    // Helper method to serialize an Arrow table to a buffer
+
+    // arrow::Result<std::shared_ptr<arrow::Buffer>> SerializeTable(const std::shared_ptr<arrow::Table> &table)
+    // {
+
+    //     // Define the initial capacity of the buffer.
+    //     int64_t initial_capacity = 1024 * 1024 * 1024;
+
+    //     // Create a resizable buffer.
+    //     arrow::Result<std::shared_ptr<arrow::ResizableBuffer>> buffer_result = arrow::AllocateResizableBuffer(initial_capacity);
+    //     if (!buffer_result.ok())
+    //     {
+    //         std::cerr << "Error allocating resizable buffer: " << buffer_result.status() << std::endl;
+    //         exit(1);
+    //     }
+    //     std::shared_ptr<arrow::ResizableBuffer> buffer = *buffer_result;
+
+    //     // Create an output stream that writes to the resizable buffer.
+    //     std::shared_ptr<arrow::io::OutputStream> raw_output = std::make_shared<arrow::io::BufferOutputStream>(buffer);
+
+    //     // Create a buffered output stream with a default buffer size
+    //     arrow::Result<std::shared_ptr<arrow::io::BufferedOutputStream>> buffered_output_result = arrow::io::BufferedOutputStream::Create(initial_capacity, arrow::default_memory_pool(), raw_output);
+    //     if (!buffered_output_result.ok())
+    //     {
+    //         std::cerr << "Error creating buffered output stream: " << buffered_output_result.status() << std::endl;
+    //         exit(1);
+    //     }
+    //     std::shared_ptr<arrow::io::BufferedOutputStream> buffered_output = *buffered_output_result;
+
+    //     // Create IPC writer options
+
+    //     arrow::ipc::IpcWriteOptions options = arrow::ipc::IpcWriteOptions::Defaults();
+
+    //     ARROW_ASSIGN_OR_RAISE(auto writer, arrow::ipc::MakeStreamWriter(buffered_output, table->schema(), options));
+
+    //     // Write the table
+
+    //     ARROW_RETURN_NOT_OK(writer->WriteTable(*table));
+
+    //     // Close the writer
+
+    //     // ARROW_RETURN_NOT_OK(writer->Close());
+    //     // ARROW_RETURN_NOT_OK(writer->Flush());
+
+    //     // Finish the stream and get buffer
+    //     std::shared_ptr<arrow::io::OutputStream> raw_stream;
+
+    //     // If the underlying stream is a BufferOutputStream, we can directly get its buffer
+    //     auto buffer_stream = std::dynamic_pointer_cast<arrow::io::BufferOutputStream>(
+    //         buffered_output->raw());
+
+    //     // If it's a BufferOutputStream, we can directly get its buffer
+    //     auto buf = buffer_stream->Finish();
+    //     return buf;
+    // }
+
 public:
     HandShakeClient(std::shared_ptr<grpc::Channel> channel)
         : stub_(handshake::HandShake::NewStub(channel)) {}
+
+    // Send an Arrow table to the server
+
+    bool ProcessArrowStream(const std::shared_ptr<arrow::Table> &table)
+    {
+
+        // Serialize the Arrow table to a buffer
+
+        arrow::Result<std::shared_ptr<arrow::Buffer>> maybe_serialized = SerializeTableToBuffer(table);
+
+        if (!maybe_serialized.ok())
+        {
+
+            std::cerr << "Failed to serialize table: " << maybe_serialized.status().ToString() << std::endl;
+
+            return false;
+        }
+
+        std::shared_ptr<arrow::Buffer> serialized = *maybe_serialized;
+
+        // Create the request and set the serialized data
+
+        handshake::ArrowTableRequest request;
+
+        request.set_serialized_table(serialized->data(), serialized->size());
+
+        // Set up the response and context
+
+        handshake::ArrowTableResponse response;
+
+        grpc::ClientContext context;
+
+        // Send the RPC
+
+        grpc::Status status = stub_->ProcessArrowStream(&context, request, &response);
+
+        if (status.ok())
+        {
+
+            std::cout << "Table sent successfully: " << response.message() << std::endl;
+
+            return response.success();
+        }
+        else
+        {
+
+            std::cerr << "Error sending table: " << status.error_message() << std::endl;
+
+            return false;
+        }
+    }
 
     std::string ProcessData(std::shared_ptr<arrow::Table> &table)
     {
         handshake::Table request{};
 
         int num_columns = table->num_columns();
-        int num_rows = table->num_rows();
+        // int num_rows = table->num_rows();
 
         // std::cout << "Table: " << table->name() << std::endl;
         // std::cout << "Number of columns: " << num_columns << std::endl;
@@ -135,7 +263,8 @@ public:
                         handshake_int64_array->add_v(arrow_val);
                     }
                 }
-                else {
+                else
+                {
                     std::cerr << "Unhandle type " << arrow_column_type_name << std::endl;
                     exit(1);
                 }
@@ -407,23 +536,30 @@ arrow::Status doit(const std::string &path_to_file, HandShakeClient *client)
     std::shared_ptr<arrow::Table> table;
     ARROW_RETURN_NOT_OK(arrow_reader->ReadTable(&table));
 
-    std::string s = client->ProcessData(table);
+    // std::string s = client->ProcessData(table);
+    // std::cout << s << std::endl;
 
-    std::cout << s << std::endl;
+    bool worked = client->ProcessArrowStream(table);
+    if(!worked) {
+        std::cerr << "Process ArrowStream failed " << std::endl;
+        exit(1);
+    }
+    // std::cout << " worked " << worked << std::endl;
 
     return arrow::Status::OK();
 }
 void RunClient(HandShakeClient *client, const std::vector<std::string> &fList, const std::string &client_name, int clientIdx, int numClients)
 {
-      std::thread::id threadId = std::this_thread::get_id();
-  std::stringstream ss;
-  ss << threadId;
-  std::string threadIdString = ss.str();
+    std::thread::id threadId = std::this_thread::get_id();
+    std::stringstream ss;
+    ss << threadId;
+    std::string threadIdString = ss.str();
     for (std::string fileName : fList)
     {
         std::cout << "Thread " << threadId << " grpcing arrow in " << fileName << std::endl;
         arrow::Status status = doit(fileName, client);
-        if(!status.ok()) {
+        if (!status.ok())
+        {
             std::cout << "status " << status.ToString() << std::endl;
             exit(1);
         }
