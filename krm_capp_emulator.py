@@ -18,6 +18,18 @@ class HandShakeClient:
         self.channel = grpc.insecure_channel(server_address)
         self.stub = handshake_pb2_grpc.HandShakeStub(self.channel)
     
+    def aggregate_local(self, ports):
+        request = handshake_pb2.AggregateLocalRequest(ports=ports)
+        try:
+            response = self.stub.AggregateLocal(request)
+            print(f"Server response: {response.return_code}")
+            return True
+        except grpc.RpcError as e:
+            print(f"Error aggregating locally: {e.code()}: {e.details()}")
+            return False
+
+
+
     def say_hello(self, name):
         """Send a hello message to the server."""
         request = handshake_pb2.HelloRequest(name=name)
@@ -130,7 +142,8 @@ if __name__ == "__main__":
     # mainTest()
     FOLDER_PATH='/mnt/e/shared/parquet'
     parquetflist = [os.path.join(root, file) for root, dirs, files in os.walk(FOLDER_PATH) for file in files if file.endswith(".parquet") and file.startswith("MV_OUT")]
-    server_addresses = ['localhost:' + str(i) for i in range(50051,50055)]
+    ports = [50051,50052,50053,50054]
+    server_addresses = ['localhost:' + str(i) for i in ports]
     sublists = [[],[],[],[],[]]
     which = 0
     for f in parquetflist:
@@ -149,6 +162,14 @@ if __name__ == "__main__":
 
     for process in processes:
         process.join()        
+
+    server_address = 'localhost:50051'
+    
+    # Create a client
+    client = HandShakeClient(server_address)
+    
+    # First, say hello
+    client.aggregate_local(ports)
 
 
 
