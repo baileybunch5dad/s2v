@@ -68,6 +68,18 @@ private:
         // Step 5: Finish and return the buffer
         return buffer_stream->Finish();
     }
+
+    // arrow::Result<std::shared_ptr<arrow::Table>> DeserializeBufferToTable(
+    //     const std::shared_ptr<arrow::Buffer> &buffer)
+    // {
+    //     auto buffer_reader = std::make_shared<arrow::io::BufferReader>(buffer);
+    //     ARROW_ASSIGN_OR_RAISE(auto reader,
+    //                           arrow::ipc::RecordBatchStreamReader::Open(buffer_reader));
+    //     std::vector<std::shared_ptr<arrow::RecordBatch>> batches;
+    //     ARROW_ASSIGN_OR_RAISE(batches, reader->ToRecordBatches());
+    //     return arrow::Table::FromRecordBatches(batches);
+    // }
+
     // Helper method to serialize an Arrow table to a buffer
 
     // arrow::Result<std::shared_ptr<arrow::Buffer>> SerializeTable(const std::shared_ptr<arrow::Table> &table)
@@ -540,7 +552,8 @@ arrow::Status doit(const std::string &path_to_file, HandShakeClient *client)
     // std::cout << s << std::endl;
 
     bool worked = client->ProcessArrowStream(table);
-    if(!worked) {
+    if (!worked)
+    {
         std::cerr << "Process ArrowStream failed " << std::endl;
         exit(1);
     }
