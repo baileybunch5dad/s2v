@@ -17,17 +17,17 @@ import pyarrow as pa
 import io
 from datetime import datetime
 
-ports = [50051,50052,50053,50054]
-if len(sys.argv) > 1:
-    for i, arg in enumerate(sys.argv):
-        print(f"Argument {i}: {arg}")
-        if arg.startswith("--ports"):
-            portstr = arg[8:]
-            ports = list(map(int, portstr.split(',')))
-else:
-    print("No arguments provided.")
+# ports = [50051,50052,50053,50054]
+# if len(sys.argv) > 1:
+#     for i, arg in enumerate(sys.argv):
+#         print(f"Argument {i}: {arg}")
+#         if arg.startswith("--ports"):
+#             portstr = arg[8:]
+#             ports = list(map(int, portstr.split(',')))
+# else:
+#     print("No arguments provided.")
 
-print(f"Using ports {ports}")
+# print(f"Using ports {ports}")
 
 class HandShakeServer(handshake_pb2_grpc.HandShakeServicer):
 
@@ -374,7 +374,7 @@ class HandShakeServer(handshake_pb2_grpc.HandShakeServicer):
         self.server.stop(grace=3)
         # sys.exit(0)
 
-def serve_memory(port: int=50051, id:int = 10):
+def serve_memory(q, port: int=50051, id:int = 10):
     import tracemalloc
     tracemalloc.start()
     port = str(port)
@@ -391,7 +391,7 @@ def serve_memory(port: int=50051, id:int = 10):
     print(f"Server started, listening on {port} from {os.getpid()=}")
     server.wait_for_termination()
 
-def serve(port: int=50051, id:int = 10):
+def serve(q, port: int=50051, id:int = 10):
     port = str(port)
     big_msg_options = [
         ("grpc.max_send_message_length", 10 * 1024 * 1024),  # 10MB
@@ -401,25 +401,36 @@ def serve(port: int=50051, id:int = 10):
     hs = HandShakeServer()
     hs.setPortIdServer(port, id, server)
     handshake_pb2_grpc.add_HandShakeServicer_to_server(hs, server)
-    server.add_insecure_port("[::]:" + port)
+    # Start the server on port 0 (dynamically assigned)
+    newport = server.add_insecure_port('[::]:0')
     server.start()
-    print(f"Server started, listening on {port} from {os.getpid()=}")
+    q.put(newport)
+    # server.add_insecure_port("[::]:" + port)
+    # server.start()
+    # print(f"Server started, listening on {newport} from {os.getpid()=}")
     server.wait_for_termination()
     # print("Waiting on stop event")    
 
 # Profile the function and save output to a file
-def serve_with_profiling(port:int=50051, id: int=0):
+def serve_with_profiling(q, port:int=50051, id: int=0):
     import cProfile
     cProfile.runctx(f'serve({port},{id})', globals(), locals(), f'profile-{id}.out')
 
 if __name__ == "__main__":
     # logging.basicConfig( level=logging.INFO)
+    queue = multiprocessing.Queue()
     processes = []
-    for idx, port in enumerate(ports):
+    for idx in range(4):
+    # for idx, port in enumerate(ports):
         # process = multiprocessing.Process(target=serve_grpc_profiling, args=(port, idx), name="Server"+str(idx))
         # process = multiprocessing.Process(target=serve_with_profiling, args=(port, idx), name="Server"+str(idx))
-        process = multiprocessing.Process(target=serve, args=(port, idx), name="Server"+str(idx))
+        process = multiprocessing.Process(target=serve, args=(queue, idx), name="Server"+str(idx))
         process.start()
         processes.append(process)
+    time.sleep(1)
+    ports = []
+    while not queue.empty():
+        ports.append(queue.get())
+    print(f"Started grpc servers on {ports}")        
     for process in processes:
         process.join()
