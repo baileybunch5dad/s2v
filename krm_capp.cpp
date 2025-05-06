@@ -7,6 +7,7 @@
 #include <memory>
 #include <string>
 #include <thread>
+#include <fstream>
 
 #include "handshake.grpc.pb.h"
 #include <filesystem>
@@ -83,7 +84,7 @@ private:
     // Helper method to serialize an Arrow table to a buffer
 
     // arrow::Result<std::shared_ptr<arrow::Buffer>> SerializeTable(const std::shared_ptr<arrow::Table> &table)
-    // {
+    // {L
 
     //     // Define the initial capacity of the buffer.
     //     int64_t initial_capacity = 1024 * 1024 * 1024;
@@ -569,7 +570,7 @@ void RunClient(HandShakeClient *client, const std::vector<std::string> &fList, c
     std::string threadIdString = ss.str();
     for (std::string fileName : fList)
     {
-        std::cout << "Thread " << threadId << " grpcing arrow in " << fileName << std::endl;
+        // std::cout << "Thread " << threadId << " grpcing arrow in " << fileName << std::endl;
         arrow::Status status = doit(fileName, client);
         if (!status.ok())
         {
@@ -583,9 +584,25 @@ int main(int argc, char **argv)
     // EmbeddedPythonController *epc = new EmbeddedPythonController();
     std::string server = "localhost";
     // bool inprocessPython = false;
-    std::vector<int> ports = {50051, 50052, 50053, 50054};
+    // std::vector<int> ports = {50051, 50052, 50053, 50054};
     std::vector<std::string> externalServers = {};
     bool shutdown = false;
+
+    std::ifstream portfile("ports.txt"); // Open the file
+    std::vector<int> ports;
+
+    if (portfile) {
+        std::istream_iterator<int> start(portfile), end;
+        ports.assign(start, end); // Read integers into the vector
+    } else {
+        std::cerr << "Error opening file!\n";
+        return 1;
+    }
+    std::cout << "Communication in " << ports.size() << " separate threads with dedicated grpc servers on ports " << std::endl;
+    for(auto p: ports) {
+        std::cout << c << ' ';
+    }
+    std::cout << std::endl;
 
     for (int i = 1; i < argc; i++)
     {

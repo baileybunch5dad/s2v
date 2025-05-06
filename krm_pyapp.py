@@ -1,6 +1,6 @@
 
 from concurrent import futures
-# import logging
+import logging
 import os
 import grpc
 import handshake_pb2
@@ -16,6 +16,7 @@ import tail_risk
 import pyarrow as pa
 import io
 from datetime import datetime
+import traceback
 
 # ports = [50051,50052,50053,50054]
 # if len(sys.argv) > 1:
@@ -59,7 +60,15 @@ class HandShakeServer(handshake_pb2_grpc.HandShakeServicer):
                 print(df)
                 self.printed = True
 
+
             grps = df.groupby(by=['scenario'])
+
+            if grps is None:
+                print(f"ERROR: Received table with {arrow_table.num_rows} but no by group variable ")
+                return handshake_pb2.ArrowTableResponse(
+                    success=False,
+                    message=f"Successfully received table with {arrow_table.num_rows} rows and {arrow_table.num_columns} columns")
+
             allkeys = []
             for grpid, grp in grps:
                 # print(f"On {os.getpid()=} adding {grpid=}")
@@ -81,10 +90,14 @@ class HandShakeServer(handshake_pb2_grpc.HandShakeServicer):
                 message=f"Successfully received table with {arrow_table.num_rows} rows and {arrow_table.num_columns} columns"
             )
         except Exception as e:
+            stack_trace = traceback.format_exc()
             # Return error response
+            error_message = f"{str(e)}\n{stack_trace}"
+            context.set_details(error_message)
+            context.set_code(grpc.StatusCode.INTERNAL)
             return handshake_pb2.ArrowTableResponse(
                 success=False,
-                message=f"Error processing Arrow table: {str(e)}"
+                message=f"Error processing Arrow table: {str(e)} {error_message}"
                )
         
     def ProcessData(self, request, context):
@@ -238,6 +251,8 @@ class HandShakeServer(handshake_pb2_grpc.HandShakeServicer):
             # print(f"{name=} {int_array_np=} {double_array_np=}")
             d = handshake_pb2.SingleHistogram(name=name, int_array=int_array_np, double_array=double_array_np)
             v.append(d)
+        print(f"Return histograms and resetting hash from {os.getpid()}")
+        self.hists = {}
 
         # for i in range(4):
         #     int_array_np = np.array(range(i+1,i+4))
@@ -261,7 +276,8 @@ class HandShakeServer(handshake_pb2_grpc.HandShakeServicer):
         print(f"On {os.getpid()=} AggregateLocal")
         ports: np.array = np.array(request.ports, dtype=int)
         if len(ports) > 1:
-            for p in ports[1:]:
+            # for p in ports[1:]:
+            for p in ports:
                 channelName = "localhost:" + str(p)
                 print(f'Thread 0 aggregating its results with {channelName}')
                 channel = grpc.insecure_channel(channelName)
@@ -405,6 +421,8 @@ def serve(q, port: int=50051, id:int = 10):
     newport = server.add_insecure_port('[::]:0')
     server.start()
     q.put(newport)
+    # with open('ports.txt','a') as pfl:
+    #     pfl.write(str(newport)+' ')
     # server.add_insecure_port("[::]:" + port)
     # server.start()
     # print(f"Server started, listening on {newport} from {os.getpid()=}")
@@ -418,9 +436,16 @@ def serve_with_profiling(q, port:int=50051, id: int=0):
 
 if __name__ == "__main__":
     # logging.basicConfig( level=logging.INFO)
+    # with open('ports.txt','w') as portfl:
+    #     portfl.write("")
     queue = multiprocessing.Queue()
+    # queue = None
     processes = []
-    for idx in range(4):
+    if len(sys.argv)>1 and sys.argv[1].startswith("--nthreads="):
+        nthreads = int(sys.argv[1][11:])
+    else:
+        nthreads=4
+    for idx in range(nthreads):
     # for idx, port in enumerate(ports):
         # process = multiprocessing.Process(target=serve_grpc_profiling, args=(port, idx), name="Server"+str(idx))
         # process = multiprocessing.Process(target=serve_with_profiling, args=(port, idx), name="Server"+str(idx))
@@ -431,6 +456,16 @@ if __name__ == "__main__":
     ports = []
     while not queue.empty():
         ports.append(queue.get())
+    queue.close()
+
+    with open('ports.txt','w') as portfl:
+        for p in ports:
+            portfl.write(str(p) + ' ')
+        
+    # ports = []
+    # with open('ports.txt','r') as fl:
+    #     line = fl.readline()
+    #     ports = [int(x) for x in line.split()]
     print(f"Started grpc servers on {ports}")        
     for process in processes:
         process.join()
