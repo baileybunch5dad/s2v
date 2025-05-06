@@ -579,30 +579,72 @@ void RunClient(HandShakeClient *client, const std::vector<std::string> &fList, c
         }
     }
 }
+
+std::vector<int> ports;
+std::mutex vector_mutex;
+
+void startPython()
+{
+    std::unique_lock<std::mutex> lock(vector_mutex);
+    std::cout << "Launching user exit" << std::endl;
+    std::string cmd = "python3.11 krm_pyapp.py";
+    std::cout << cmd << std::endl;
+    std::shared_ptr<FILE> pipe(popen(cmd.c_str(), "r"), pclose);
+
+    if (!pipe)
+    {
+        std::cerr << "Unable to launch python" << std::endl;
+        exit(1);
+    }
+    std::cout << "process launched, capturing output" << std::endl;
+    lock.unlock();
+
+    char buffer[64];
+    bool first = true;
+    std::string initialString = "";
+    if (fgets(buffer, sizeof(buffer), pipe.get()) != nullptr)
+    {
+        std::string multiline_string = buffer;
+        if (first)
+        {
+            //  buffering until first complete line read for ports
+            initialString = initialString + multiline_string;
+            std::cout << " Still building multling string -- so far have '" << initialString << "'" << std::endl;
+            if (initialString.find('\n') != std::string::npos) 
+            {
+                std::string first_line;
+
+                std::istringstream stream(multiline_string);
+                // Read first line into a buffer
+                std::getline(stream, first_line);
+
+                // Parse space-separated integers
+                std::vector<int> numbers;
+                std::istringstream line_stream(first_line);
+                int num;
+
+                while (line_stream >> num)
+                {
+                    std::cout << "Port " << num << std::endl;
+                    // ports.push_back(num);
+                }
+                first = false;
+            }
+        }
+        std::cout << multiline_string;
+    }
+}
+
 int main(int argc, char **argv)
 {
     // EmbeddedPythonController *epc = new EmbeddedPythonController();
     std::string server = "localhost";
-    // bool inprocessPython = false;
+    bool inprocessPython = true;
     // std::vector<int> ports = {50051, 50052, 50053, 50054};
     std::vector<std::string> externalServers = {};
     bool shutdown = false;
-
-    std::ifstream portfile("ports.txt"); // Open the file
-    std::vector<int> ports;
-
-    if (portfile) {
-        std::istream_iterator<int> start(portfile), end;
-        ports.assign(start, end); // Read integers into the vector
-    } else {
-        std::cerr << "Error opening file!\n";
-        return 1;
-    }
-    std::cout << "Communication in " << ports.size() << " separate threads with dedicated grpc servers on ports " << std::endl;
-    for(auto p: ports) {
-        std::cout << c << ' ';
-    }
-    std::cout << std::endl;
+    std::thread pythrd;
+    // std::vector<int> ports;
 
     for (int i = 1; i < argc; i++)
     {
@@ -612,10 +654,10 @@ int main(int argc, char **argv)
         {
             server = parmval(s, "--server");
         }
-        // if (starts_with(s, "--embedded"))
-        // {
-        //     inprocessPython = true;
-        // }
+        if (starts_with(s, "--external"))
+        {
+            inprocessPython = false;
+        }
         if (starts_with(s, "--ports"))
         {
             ports = stringToArrayOfInts(parmval(s, "--ports"));
@@ -629,6 +671,49 @@ int main(int argc, char **argv)
             shutdown = true;
         }
     }
+
+    if (inprocessPython)
+    {
+        std::cout << "inProcess" << std::endl;
+        pythrd = std::thread(startPython); // , std::cref(ports));
+        std::this_thread::sleep_for(std::chrono::milliseconds(10000)); // let other thread acquire the lock
+        std::cout << "Waiting on lock" << std::endl;
+        std::unique_lock<std::mutex> lock(vector_mutex);
+        std::cout << "Processing output in primordial thread" << std::endl;
+
+        // TODO temporarily get the ports from the text file until separate vector population after subprocess bugs cleared
+        std::ifstream portfile("ports.txt"); // Open the file
+        if (portfile)
+        {
+            std::istream_iterator<int> start(portfile), end;
+            ports.assign(start, end); // Read integers into the vector
+        }
+        else
+        {
+            std::cerr << "Error opening file!\n";
+            return 1;
+        }
+    }
+    else
+    {
+        std::ifstream portfile("ports.txt"); // Open the file
+        if (portfile)
+        {
+            std::istream_iterator<int> start(portfile), end;
+            ports.assign(start, end); // Read integers into the vector
+        }
+        else
+        {
+            std::cerr << "Error opening file!\n";
+            return 1;
+        }
+    }
+    for (auto p : ports)
+    {
+        std::cout << p << ' ';
+    }
+    std::cout << "There are " << ports.size() << " ports opened in separate threads with dedicated grpc servers" << std::endl;
+
     std::cout << "Ports ";
     for (auto p : ports)
     {

@@ -425,7 +425,7 @@ def serve(q, port: int=50051, id:int = 10):
     #     pfl.write(str(newport)+' ')
     # server.add_insecure_port("[::]:" + port)
     # server.start()
-    # print(f"Server started, listening on {newport} from {os.getpid()=}")
+    # print(f"Server started, listening on {newport} from PID={os.getpid()=}")
     server.wait_for_termination()
     # print("Waiting on stop event")    
 
@@ -435,9 +435,12 @@ def serve_with_profiling(q, port:int=50051, id: int=0):
     cProfile.runctx(f'serve({port},{id})', globals(), locals(), f'profile-{id}.out')
 
 if __name__ == "__main__":
+    # print("34 8764323 89734 987234")
+    # for i in range(10):
+    #     print("bananas are healthy")
     # logging.basicConfig( level=logging.INFO)
-    # with open('ports.txt','w') as portfl:
-    #     portfl.write("")
+    with open('ports.txt','w') as portfl:
+        portfl.write("")
     queue = multiprocessing.Queue()
     # queue = None
     processes = []
@@ -462,10 +465,17 @@ if __name__ == "__main__":
         for p in ports:
             portfl.write(str(p) + ' ')
         
+    for p in ports:
+        print(str(p),end=' ')
+    print()
+    for i in range(20):
+        print("I like bananas and apples too")
+
     # ports = []
     # with open('ports.txt','r') as fl:
     #     line = fl.readline()
     #     ports = [int(x) for x in line.split()]
-    print(f"Started grpc servers on {ports}")        
+    print(f"Started grpc servers on {ports}") 
+    print("Waiting for servers to receive termination from krm_capp controller")
     for process in processes:
         process.join()
