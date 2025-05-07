@@ -597,7 +597,7 @@ void startPython()
         exit(1);
     }
     std::cout << "process launched, capturing output" << std::endl;
-    lock.unlock();
+    // lock.unlock();
 
     char buffer[64];
     bool first = true;
