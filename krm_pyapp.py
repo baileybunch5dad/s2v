@@ -118,6 +118,7 @@ class HandShakeServer(handshake_pb2_grpc.HandShakeServicer):
         if not self.printed:
             print(f"PID {os.getpid()} receiving frames like ")
             print(df)
+            sys.stdout.flush()
             self.printed = True
 
         grps = df.groupby(by=['scenario'])
@@ -426,6 +427,7 @@ def serve(q, port: int=50051, id:int = 10):
     # server.add_insecure_port("[::]:" + port)
     # server.start()
     # print(f"Server started, listening on {newport} from PID={os.getpid()=}")
+    sys.stdout.flush()
     server.wait_for_termination()
     # print("Waiting on stop event")    
 
@@ -464,12 +466,10 @@ if __name__ == "__main__":
     with open('ports.txt','w') as portfl:
         for p in ports:
             portfl.write(str(p) + ' ')
-        
     for p in ports:
         print(str(p),end=' ')
     print()
-    for i in range(20):
-        print("I like bananas and apples too")
+    sys.stdout.flush()
 
     # ports = []
     # with open('ports.txt','r') as fl:
@@ -477,5 +477,6 @@ if __name__ == "__main__":
     #     ports = [int(x) for x in line.split()]
     print(f"Started grpc servers on {ports}") 
     print("Waiting for servers to receive termination from krm_capp controller")
+    sys.stdout.flush()
     for process in processes:
         process.join()

@@ -1,0 +1,21 @@
+syntax = "proto3";
+
+package arrow_service;
+
+// Service definition for Arrow data transfer
+service ArrowTransfer {
+  // Send an Arrow table serialized as an IPC message
+  rpc SendArrowTable (ArrowTableRequest) returns (ArrowTableResponse) {}
+}
+
+// Request containing the Arrow table serialized as an IPC message
+message ArrowTableRequest {
+  bytes serialized_table = 1;
+}
+
+// Response after processing the Arrow table
+message ArrowTableResponse {
+  bool success = 1;
+  string message = 2;
+  int32 rows_received = 3;
+}

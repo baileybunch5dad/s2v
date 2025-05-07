@@ -1,0 +1,43 @@
+syntax = "proto3";
+
+package table;
+
+// Message containing an array with either strings or doubles, plus a name field
+message Column {
+  string name = 1; // New field for identifying the array
+  oneof data_type {
+      StringArray string_array = 2;
+      DoubleArray double_array = 3;
+      LongArray long_array = 4;
+  }
+}
+
+message LongArray {
+repeated int64 v = 1;
+}
+message StringArray {
+repeated string v = 1;
+}
+
+message DoubleArray {
+repeated double v = 1;
+}
+
+// Wrapper message to send multiple arrays
+message Table {
+  repeated Column columns = 1;
+}
+
+message StringResponse {
+  string status = 1;
+}
+
+
+// gRPC service to send the table
+service TableService {
+    rpc SendTable (Table) returns (Response);
+}
+
+message Response {
+    string status = 1;
+}

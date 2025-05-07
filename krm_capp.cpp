@@ -602,14 +602,14 @@ void startPython()
     char buffer[64];
     bool first = true;
     std::string initialString = "";
-    if (fgets(buffer, sizeof(buffer), pipe.get()) != nullptr)
+    while (fgets(buffer, sizeof(buffer), pipe.get()) != nullptr)
     {
-        std::string multiline_string = buffer;
+        std::cout << buffer;
         if (first)
         {
+            std::string multiline_string = buffer;
             //  buffering until first complete line read for ports
             initialString = initialString + multiline_string;
-            std::cout << " Still building multling string -- so far have '" << initialString << "'" << std::endl;
             if (initialString.find('\n') != std::string::npos) 
             {
                 std::string first_line;
@@ -626,12 +626,13 @@ void startPython()
                 while (line_stream >> num)
                 {
                     std::cout << "Port " << num << std::endl;
-                    // ports.push_back(num);
+                    ports.push_back(num);
                 }
                 first = false;
+                lock.unlock();
+
             }
         }
-        std::cout << multiline_string;
     }
 }
 
@@ -682,17 +683,17 @@ int main(int argc, char **argv)
         std::cout << "Processing output in primordial thread" << std::endl;
 
         // TODO temporarily get the ports from the text file until separate vector population after subprocess bugs cleared
-        std::ifstream portfile("ports.txt"); // Open the file
-        if (portfile)
-        {
-            std::istream_iterator<int> start(portfile), end;
-            ports.assign(start, end); // Read integers into the vector
-        }
-        else
-        {
-            std::cerr << "Error opening file!\n";
-            return 1;
-        }
+        // std::ifstream portfile("ports.txt"); // Open the file
+        // if (portfile)
+        // {
+        //     std::istream_iterator<int> start(portfile), end;
+        //     ports.assign(start, end); // Read integers into the vector
+        // }
+        // else
+        // {
+        //     std::cerr << "Error opening file!\n";
+        //     return 1;
+        // }
     }
     else
     {
