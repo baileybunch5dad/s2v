@@ -36,12 +36,13 @@ class HandShakeServer(handshake_pb2_grpc.HandShakeServicer):
     #     self.server = server
         # self.logger = logging.getLogger('HandShakeService')
 
-    def setPortIdServer(self, port, id, server):
+    def setOptions(self, port, id, server, credentials):
         self.port = port
         self.id = id
         self.server = server
         self.hists = {}
         self.printed = False
+        self.credentials = credentials
 
     def ProcessArrowStream(self, request, context):
         """Receives a serialized Arrow table, deserializes it, and processes it."""
@@ -275,44 +276,41 @@ class HandShakeServer(handshake_pb2_grpc.HandShakeServicer):
 
     def AggregateLocal(self, request, context):
         print(f"On {os.getpid()=} AggregateLocal")
-        ports: np.array = np.array(request.ports, dtype=int)
-        if len(ports) > 1:
-            # for p in ports[1:]:
-            for p in ports:
-                channelName = "localhost:" + str(p)
-                print(f'Thread 0 aggregating its results with {channelName}')
-                channel = grpc.insecure_channel(channelName)
-                stub = handshake_pb2_grpc.HandShakeStub(channel)
-                # print(f'Thread 0 aggregating its results with {channelName}')
-                request = handshake_pb2.GetHistogramsRequest(code=1)
-                otherThreadResults = stub.GetHistograms(request)
-                for h in otherThreadResults.histograms:
-                    scenario = h.name
-                    scenario_bins = list(h.double_array)
-                    scenario_freqs = list(h.int_array)
-                    print(f"Name: {scenario}")
-                    print(f"Hist: {scenario_bins}")
-                    print(f"Bins: {scenario_freqs}")
-                # tr = tail_risk.tail_risk(scenario_bins, scenario_freqs, dist="GPD")
-                # print("Value at Risk and Expected Shortfall")
-                # print(tr)
-    #                 reponse = handshake_pb2.MultipleHistograms(=[
-    #     hister_pb2.DataStruct(name="Set1", int_array=[1, 2, 3], double_array=[1.1, 2.2, 3.3]),
-    #     hister_pb2.DataStruct(name="Set2", int_array=[4, 5, 6], double_array=[4.4, 5.5, 6.6]),
-    #     hister_pb2.DataStruct(name="Set3", int_array=[7, 8, 9], double_array=[7.7, 8.8, 9.9])
-    # ])
-
-    # response = stub.SendData(request)
-    #             print(f'Python thread 0 received this response from {channelName}')
-    #             dname: str = otherThreadResults.doublename
-    #             dvals: np.array = np.array(otherThreadResults.doublevalues, dtype=np.float64)
-    #             sname: str = otherThreadResults.stringname
-    #             svals: np.array = np.array(otherThreadResults.stringvalues, dtype=str)
-    #             df = pd.DataFrame({dname: dvals, sname: svals})
-    #             print(df.round(2))
-        else:
-            print('Thread 0 aggregating as sole thread')
-        return handshake_pb2.AggregateLocalResponse(return_code=0)
+        try:
+            ports: np.array = np.array(request.ports, dtype=int)
+            if len(ports) > 1:
+                # for p in ports[1:]:
+                for p in ports:
+                    channelName = "localhost:" + str(p)
+                    print(f'Thread 0 aggregating its results with {channelName}')
+                    if self.credentials is not None:
+                        chennel = grpc.secure_channel(channelName, self.credentials)
+                    else:
+                        channel = grpc.insecure_channel(channelName)
+                    stub = handshake_pb2_grpc.HandShakeStub(channel)
+                    # print(f'Thread 0 aggregating its results with {channelName}')
+                    request = handshake_pb2.GetHistogramsRequest(code=1)
+                    otherThreadResults = stub.GetHistograms(request)
+                    for h in otherThreadResults.histograms:
+                        scenario = h.name
+                        scenario_bins = list(h.double_array)
+                        scenario_freqs = list(h.int_array)
+                        print(f"Name: {scenario}")
+                        print(f"Hist: {scenario_bins}")
+                        print(f"Bins: {scenario_freqs}")
+                    # tr = tail_risk.tail_risk(scenario_bins, scenario_freqs, dist="GPD")
+            else:
+                print('Thread 0 aggregating as sole thread')
+            return handshake_pb2.AggregateLocalResponse(return_code=0)
+        except Exception as e:
+            stack_trace = traceback.format_exc()
+            # Return error response
+            error_message = f"{str(e)}\n{stack_trace}"
+            context.set_details(error_message)
+            context.set_code(grpc.StatusCode.INTERNAL)
+            return handshake_pb2.AggregateLocalResponse(
+                return_code=1
+                )
 
     def AggregateGlobal(self, request, context):
         print(f"On {os.getpid()=} AggregateGlobal")
@@ -391,35 +389,60 @@ class HandShakeServer(handshake_pb2_grpc.HandShakeServicer):
         self.server.stop(grace=3)
         # sys.exit(0)
 
-def serve_memory(q, port: int=50051, id:int = 10):
-    import tracemalloc
-    tracemalloc.start()
-    port = str(port)
-    big_msg_options = [
-        ("grpc.max_send_message_length", 10 * 1024 * 1024),  # 10MB
-        ("grpc.max_receive_message_length", 1024 * 1024 * 1024)  # 1GB
-    ]
-    server = grpc.server(futures.ThreadPoolExecutor(max_workers=10), options=big_msg_options)
-    hs = HandShakeServer()
-    hs.setPortIdServer(port, id, server)
-    handshake_pb2_grpc.add_HandShakeServicer_to_server(hs, server)
-    server.add_insecure_port("[::]:" + port)
-    server.start()
-    print(f"Server started, listening on {port} from {os.getpid()=}")
-    server.wait_for_termination()
+# def serve_memory(q, port: int=50051, id:int = 10):
+#     import tracemalloc
+#     tracemalloc.start()
+#     port = str(port)
+#     big_msg_options = [
+#         ("grpc.max_send_message_length", 10 * 1024 * 1024),  # 10MB
+#         ("grpc.max_receive_message_length", 1024 * 1024 * 1024)  # 1GB
+#     ]
+#     server = grpc.server(futures.ThreadPoolExecutor(max_workers=10), options=big_msg_options)
+#     hs = HandShakeServer()
+#     hs.setOptions(port, id, server, useSecureChannel)
+#     handshake_pb2_grpc.add_HandShakeServicer_to_server(hs, server)
+#     server.add_insecure_port("[::]:" + port)
+#     server.start()
+#     print(f"Server started, listening on {port} from {os.getpid()=}")
+#     server.wait_for_termination()
 
-def serve(q, port: int=50051, id:int = 10):
-    port = str(port)
+def serve(q, id:int = 10, useSecureChannel:bool = False):
+    # print(f"SUBPROCESS Use secure channel {useSecureChannel}")
     big_msg_options = [
         ("grpc.max_send_message_length", 10 * 1024 * 1024),  # 10MB
         ("grpc.max_receive_message_length", 1024 * 1024 * 1024)  # 1GB
     ]
-    server = grpc.server(futures.ThreadPoolExecutor(max_workers=10), options=big_msg_options)
-    hs = HandShakeServer()
-    hs.setPortIdServer(port, id, server)
-    handshake_pb2_grpc.add_HandShakeServicer_to_server(hs, server)
-    # Start the server on port 0 (dynamically assigned)
-    newport = server.add_insecure_port('[::]:0')
+    
+    server = None
+    hs = None
+    newport = 0
+    
+    if useSecureChannel:
+            # Load SSL credentials
+        with open("server.key", "rb") as f:
+            private_key = f.read()
+        with open("server.crt", "rb") as f:
+            certificate = f.read()
+
+        server_credentials = grpc.ssl_server_credentials([(private_key, certificate)])
+        
+        server = grpc.server(futures.ThreadPoolExecutor(max_workers=5), options=big_msg_options)
+        hs = HandShakeServer()
+        handshake_pb2_grpc.add_HandShakeServicer_to_server(hs, server)
+
+        newport = server.add_secure_port('[::]:0', server_credentials)
+        client_credentials = grpc.ssl_channel_credentials(root_certificates=certificate)
+        hs.setOptions(newport, id, server, client_credentials)
+
+    else:
+        server = grpc.server(futures.ThreadPoolExecutor(max_workers=5), options=big_msg_options)
+        hs = HandShakeServer()
+        handshake_pb2_grpc.add_HandShakeServicer_to_server(hs, server)
+
+        # Start the server on port 0 (dynamically assigned)
+        newport = server.add_insecure_port('[::]:0')
+        hs.setOptions(newport, id, server, None)
+        
     server.start()
     q.put(newport)
     # with open('ports.txt','a') as pfl:
@@ -427,7 +450,9 @@ def serve(q, port: int=50051, id:int = 10):
     # server.add_insecure_port("[::]:" + port)
     # server.start()
     # print(f"Server started, listening on {newport} from PID={os.getpid()=}")
+    
     sys.stdout.flush()
+    
     server.wait_for_termination()
     # print("Waiting on stop event")    
 
@@ -446,15 +471,19 @@ if __name__ == "__main__":
     queue = multiprocessing.Queue()
     # queue = None
     processes = []
-    if len(sys.argv)>1 and sys.argv[1].startswith("--nthreads="):
-        nthreads = int(sys.argv[1][11:])
-    else:
-        nthreads=4
+    nthreads = 4
+    useSecureChannel = False
+    for argument in sys.argv[1:]:
+        if argument.startswith("--nthreads="):
+            nthreads = int(argument[11:])
+        if argument.startswith("--secure"):
+            useSecureChannel = True
+    # print(f"Use secure channel {useSecureChannel}")
     for idx in range(nthreads):
     # for idx, port in enumerate(ports):
         # process = multiprocessing.Process(target=serve_grpc_profiling, args=(port, idx), name="Server"+str(idx))
         # process = multiprocessing.Process(target=serve_with_profiling, args=(port, idx), name="Server"+str(idx))
-        process = multiprocessing.Process(target=serve, args=(queue, idx), name="Server"+str(idx))
+        process = multiprocessing.Process(target=serve, args=(queue, idx, useSecureChannel), name="Server"+str(idx))
         process.start()
         processes.append(process)
     time.sleep(1)
@@ -469,6 +498,7 @@ if __name__ == "__main__":
     for p in ports:
         print(str(p),end=' ')
     print()
+    print(f"TLS encrytion {useSecureChannel}")
     sys.stdout.flush()
 
     # ports = []

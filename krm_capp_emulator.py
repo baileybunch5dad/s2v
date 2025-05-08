@@ -14,9 +14,19 @@ import handshake_pb2
 import handshake_pb2_grpc
 
 class HandShakeClient:
-    def __init__(self, server_address):
-        self.channel = grpc.insecure_channel(server_address)
+    def __init__(self, server_address, useSecureChannel):
+        print(f"Initializing a 'thread' for dedicated communication: TLS {useSecureChannel}")        
+        if useSecureChannel:
+            with open("server.crt", "rb") as f:
+                trusted_certs = f.read()
+
+            credentials = grpc.ssl_channel_credentials(root_certificates=trusted_certs)
+            self.channel = grpc.secure_channel(server_address, credentials)
+        else:
+            self.channel = grpc.insecure_channel(server_address)
         self.stub = handshake_pb2_grpc.HandShakeStub(self.channel)
+        
+        
     
     def aggregate_local(self, ports):
         request = handshake_pb2.AggregateLocalRequest(ports=ports)
@@ -108,7 +118,7 @@ def mainTest():
     server_address = 'localhost:50051'
     
     # Create a client
-    client = HandShakeClient(server_address)
+    client = HandShakeClient(server_address, false)
     
     # First, say hello
     print("Saying hello to the server...")
@@ -125,13 +135,31 @@ def mainTest():
     # Send the table
     client.send_table_from_parquet(parquet_file)
 
-def capp_thread(server_address, flist):
+def capp_thread(server_address, flist, useSecureChannel):
      # Create a client
-    client = HandShakeClient(server_address)
+     
+    print(f"capp thread {server_address=} {useSecureChannel=}")
+    
+    # if useSecureChannel:
+    #     with open("server.crt", "rb") as f:
+    #         trusted_certs = f.read()
+
+    #     credentials = grpc.ssl_channel_credentials(root_certificates=trusted_certs)
+    #     channel = grpc.secure_channel(server_address, credentials)
+
+    # stub = handshake_pb2_grpc.HandShakeStub(channel)
+    # request = handshake_pb2.HelloRequest(name=f"gRPC Test secure={useSecureChannel}")
+    # response = stub.Hello(request)
+
+    # print("Server Response:", response.reply)
+
+    client = HandShakeClient(server_address, useSecureChannel)
+    
+    
     
     # First, say hello
     print("Saying hello to the server...")
-    client.say_hello("KRM_CAPP_EMULATOR")
+    client.say_hello(f"KRM_CAPP_EMULATOR TLS={useSecureChannel}")
     
     for parquet_file in flist:
         # print(f"Processs {os.getpid()} sending arrow stream from {parquet_file}")
@@ -140,33 +168,48 @@ def capp_thread(server_address, flist):
 
 if __name__ == "__main__":
     # mainTest()
-    FOLDER_PATH='/mnt/e/shared/parquet'
+    FOLDER_PATH='./parquet'
     parquetflist = [os.path.join(root, file) for root, dirs, files in os.walk(FOLDER_PATH) for file in files if file.endswith(".parquet") and file.startswith("MV_OUT")]
-    ports = [50051,50052,50053,50054]
+    with open("ports.txt", "r") as file:
+        portdata = file.read()
+
+# Convert space-separated integers into a list
+    ports = list(map(int, portdata.split()))
+
+    useSecureChannel = False
+    for argument in sys.argv[1:]:
+        if argument.startswith("--secure"):
+            useSecureChannel = True
+    # ports = [50051,50052,50053,50054]
     server_addresses = ['localhost:' + str(i) for i in ports]
     sublists = [[],[],[],[],[]]
     which = 0
     for f in parquetflist:
         sublists[which].append(f)
         which += 1
-        if which == 4:
+        if which == len(ports):
             which = 0
     processes = []
     for subprocessaddress,subprocessfiles in zip(server_addresses, sublists):
         print(subprocessaddress)
         print(len(subprocessfiles))
         print(subprocessfiles[0], subprocessfiles[-1])
-        process = multiprocessing.Process(target=capp_thread, args=(subprocessaddress, subprocessfiles), name="Dedicated therad for "+subprocessaddress)
+        process = multiprocessing.Process(target=capp_thread, args=(subprocessaddress, subprocessfiles, useSecureChannel), name="Dedicated therad for "+subprocessaddress)
         process.start()
         processes.append(process)
 
     for process in processes:
         process.join()        
 
-    server_address = 'localhost:50051'
-    
+    server_address = server_addresses[0]
+    print(f"Main driver aggregating {server_address=} {useSecureChannel=}")
+        
     # Create a client
-    client = HandShakeClient(server_address)
+    client = HandShakeClient(server_address, useSecureChannel)
+    
+    # First, say hello
+    print("Saying hello to the server...")
+    client.say_hello(f"KRM_CAPP_EMULATOR TLS={useSecureChannel}")
     
     # First, say hello
     client.aggregate_local(ports)

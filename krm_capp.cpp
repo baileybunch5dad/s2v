@@ -492,7 +492,8 @@ std::string parmval(const std::string &s, const std::string &prfix)
 
 std::vector<std::string> getListofParquetFiles()
 {
-    std::string path = "/mnt/e/shared/parquet"; // Specify the directory path
+    // std::string path = "/mnt/e/shared/parquet"; // Specify the directory path
+    std::string path = "./parquet";
     std::vector<std::string> dirList;
 
     try
@@ -610,7 +611,7 @@ void startPython()
             std::string multiline_string = buffer;
             //  buffering until first complete line read for ports
             initialString = initialString + multiline_string;
-            if (initialString.find('\n') != std::string::npos) 
+            if (initialString.find('\n') != std::string::npos)
             {
                 std::string first_line;
 
@@ -630,11 +631,12 @@ void startPython()
                 }
                 first = false;
                 lock.unlock();
-
             }
         }
     }
 }
+
+bool useSecureChannel = true;
 
 int main(int argc, char **argv)
 {
@@ -659,6 +661,10 @@ int main(int argc, char **argv)
         {
             inprocessPython = false;
         }
+        if (starts_with(s, "--secure"))
+        {
+            useSecureChannel = true;
+        }
         if (starts_with(s, "--ports"))
         {
             ports = stringToArrayOfInts(parmval(s, "--ports"));
@@ -676,7 +682,7 @@ int main(int argc, char **argv)
     if (inprocessPython)
     {
         std::cout << "inProcess" << std::endl;
-        pythrd = std::thread(startPython); // , std::cref(ports));
+        pythrd = std::thread(startPython);                             // , std::cref(ports));
         std::this_thread::sleep_for(std::chrono::milliseconds(10000)); // let other thread acquire the lock
         std::cout << "Waiting on lock" << std::endl;
         std::unique_lock<std::mutex> lock(vector_mutex);
@@ -751,7 +757,26 @@ int main(int argc, char **argv)
         channel_args.SetMaxReceiveMessageSize(1024 * 1024 * 1024); // 1GB
         std::string addr = server_addresses[i];
         std::cout << "Creating channel for " << addr << std::endl;
-        auto channel = grpc::CreateCustomChannel(addr, grpc::InsecureChannelCredentials(), channel_args);
+        std::cout << "Using TLS security" << useSecureChannel << std::endl;
+        std::shared_ptr<grpc::Channel> channel;
+        if (useSecureChannel)
+        {
+            // Load the server certificate
+            std::string server_cert;
+            std::ifstream cert_file("server.crt");
+            server_cert.assign(std::istreambuf_iterator<char>(cert_file), std::istreambuf_iterator<char>());
+
+            // Configure secure channel with max receive message size
+            grpc::SslCredentialsOptions ssl_opts;
+            ssl_opts.pem_root_certs = server_cert;
+
+            channel = grpc::CreateCustomChannel(addr, grpc::SslCredentials(ssl_opts), channel_args);
+        }
+        else
+        {
+
+            channel = grpc::CreateCustomChannel(addr, grpc::InsecureChannelCredentials(), channel_args);
+        }
 
         WaitForChannelReady(channel);
         HandShakeClient *client = new HandShakeClient(channel);

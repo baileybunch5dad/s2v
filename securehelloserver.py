@@ -17,12 +17,17 @@ def serve():
 
     credentials = grpc.ssl_server_credentials([(private_key, certificate)])
     
-    server = grpc.server(futures.ThreadPoolExecutor(max_workers=5))
+    big_msg_options = [
+        ("grpc.max_send_message_length", 10 * 1024 * 1024),  # 10MB
+        ("grpc.max_receive_message_length", 1024 * 1024 * 1024)  # 1GB
+    ]
+    server = grpc.server(futures.ThreadPoolExecutor(max_workers=5), options=big_msg_options)
     handshake_pb2_grpc.add_HandShakeServicer_to_server(SecureHelloService(), server)
 
-    server.add_secure_port("[::]:50051", credentials)
+    # server.add_secure_port("[::]:50051", credentials)
+    newport = server.add_secure_port("[::]:0", credentials)
     server.start()
-    print("Secure gRPC Server running on port 50051...")
+    print(f"Secure gRPC Server running on port {newport}...")
     server.wait_for_termination()
 
 if __name__ == "__main__":
