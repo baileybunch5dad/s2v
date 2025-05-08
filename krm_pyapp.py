@@ -284,7 +284,7 @@ class HandShakeServer(handshake_pb2_grpc.HandShakeServicer):
                     channelName = "localhost:" + str(p)
                     print(f'Thread 0 aggregating its results with {channelName}')
                     if self.credentials is not None:
-                        chennel = grpc.secure_channel(channelName, self.credentials)
+                        channel = grpc.secure_channel(channelName, self.credentials)
                     else:
                         channel = grpc.insecure_channel(channelName)
                     stub = handshake_pb2_grpc.HandShakeStub(channel)
