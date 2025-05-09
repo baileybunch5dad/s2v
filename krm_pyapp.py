@@ -291,13 +291,16 @@ class HandShakeServer(handshake_pb2_grpc.HandShakeServicer):
                     # print(f'Thread 0 aggregating its results with {channelName}')
                     request = handshake_pb2.GetHistogramsRequest(code=1)
                     otherThreadResults = stub.GetHistograms(request)
+                    nPrinted = 0
                     for h in otherThreadResults.histograms:
                         scenario = h.name
                         scenario_bins = list(h.double_array)
                         scenario_freqs = list(h.int_array)
-                        print(f"Name: {scenario}")
-                        print(f"Hist: {scenario_bins}")
-                        print(f"Bins: {scenario_freqs}")
+                        nPrinted += 1
+                        if nPrinted < 5:
+                            print(f"Name: {scenario}")
+                            print(f"Hist: {scenario_bins}")
+                            print(f"Bins: {scenario_freqs}")
                     # tr = tail_risk.tail_risk(scenario_bins, scenario_freqs, dist="GPD")
             else:
                 print('Thread 0 aggregating as sole thread')
@@ -399,15 +402,15 @@ class HandShakeServer(handshake_pb2_grpc.HandShakeServicer):
 #     ]
 #     server = grpc.server(futures.ThreadPoolExecutor(max_workers=10), options=big_msg_options)
 #     hs = HandShakeServer()
-#     hs.setOptions(port, id, server, useSecureChannel)
+#     hs.setOptions(port, id, server, tls)
 #     handshake_pb2_grpc.add_HandShakeServicer_to_server(hs, server)
 #     server.add_insecure_port("[::]:" + port)
 #     server.start()
 #     print(f"Server started, listening on {port} from {os.getpid()=}")
 #     server.wait_for_termination()
 
-def serve(q, id:int = 10, useSecureChannel:bool = False):
-    # print(f"SUBPROCESS Use secure channel {useSecureChannel}")
+def serve(q, id:int = 10, tls:bool = False):
+    # print(f"SUBPROCESS Use secure channel {tls}")
     big_msg_options = [
         ("grpc.max_send_message_length", 10 * 1024 * 1024),  # 10MB
         ("grpc.max_receive_message_length", 1024 * 1024 * 1024)  # 1GB
@@ -417,7 +420,7 @@ def serve(q, id:int = 10, useSecureChannel:bool = False):
     hs = None
     newport = 0
     
-    if useSecureChannel:
+    if tls:
             # Load SSL credentials
         with open("server.key", "rb") as f:
             private_key = f.read()
@@ -472,18 +475,20 @@ if __name__ == "__main__":
     # queue = None
     processes = []
     nthreads = 4
-    useSecureChannel = False
+    tls = False
     for argument in sys.argv[1:]:
         if argument.startswith("--nthreads="):
             nthreads = int(argument[11:])
-        if argument.startswith("--secure"):
-            useSecureChannel = True
-    # print(f"Use secure channel {useSecureChannel}")
+        if argument.startswith("--tls") or argument.startswith("--secure"):
+            tls = True
+        if argument.startswith("--notls") or argument.startswith("--nosecure"):
+            tls = False
+    # print(f"Use secure channel {tls}")
     for idx in range(nthreads):
     # for idx, port in enumerate(ports):
         # process = multiprocessing.Process(target=serve_grpc_profiling, args=(port, idx), name="Server"+str(idx))
         # process = multiprocessing.Process(target=serve_with_profiling, args=(port, idx), name="Server"+str(idx))
-        process = multiprocessing.Process(target=serve, args=(queue, idx, useSecureChannel), name="Server"+str(idx))
+        process = multiprocessing.Process(target=serve, args=(queue, idx, tls), name="Server"+str(idx))
         process.start()
         processes.append(process)
     time.sleep(1)
@@ -498,7 +503,7 @@ if __name__ == "__main__":
     for p in ports:
         print(str(p),end=' ')
     print()
-    print(f"TLS encrytion {useSecureChannel}")
+    print(f"TLS encrytion {tls}")
     sys.stdout.flush()
 
     # ports = []

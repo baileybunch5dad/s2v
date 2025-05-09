@@ -165,6 +165,16 @@ krm_capp.o: krm_capp.cpp handshake.grpc.pb.cc
 	# HandShakeClient.o ChunkedDataFrame.o EmbeddedPythonController.o
 	#
 
+wawao.o: wawao.cpp
+	$(CXX)  $(CXXFLAGS) -c wawao.cpp
+
+wawao: wawao.o
+	g++ wawao.o \
+	handshake.grpc.pb.o \
+	handshake.pb.o \
+	-o wawao \
+	$(CBLDSTUFF)
+
 krm_capp: krm_capp.o  handshake.grpc.pb.o 
 	g++ krm_capp.o \
 	handshake.grpc.pb.o \

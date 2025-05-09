@@ -535,7 +535,7 @@ std::vector<std::vector<std::string>> chopList(const std::vector<std::string> &d
     return cList;
 }
 
-arrow::Status doit(const std::string &path_to_file, HandShakeClient *client)
+arrow::Status doit(const std::string &path_to_file, std::shared_ptr<HandShakeClient> client)
 {
 
     arrow::MemoryPool *pool = arrow::default_memory_pool();
@@ -563,7 +563,7 @@ arrow::Status doit(const std::string &path_to_file, HandShakeClient *client)
 
     return arrow::Status::OK();
 }
-void RunClient(HandShakeClient *client, const std::vector<std::string> &fList, const std::string &client_name, int clientIdx, int numClients)
+void RunClient(std::shared_ptr<HandShakeClient> client, const std::vector<std::string> &fList, const std::string &client_name, int clientIdx, int numClients)
 {
     std::thread::id threadId = std::this_thread::get_id();
     std::stringstream ss;
@@ -584,11 +584,15 @@ void RunClient(HandShakeClient *client, const std::vector<std::string> &fList, c
 std::vector<int> ports;
 std::mutex vector_mutex;
 
-void startPython()
+void startPython(int argc, char **argv)
 {
     std::unique_lock<std::mutex> lock(vector_mutex);
     std::cout << "Launching user exit" << std::endl;
     std::string cmd = "python3.11 krm_pyapp.py";
+    for(int i=1;i<argc;i++) {
+        cmd += " ";
+        cmd += argv[i];
+    }
     std::cout << cmd << std::endl;
     std::shared_ptr<FILE> pipe(popen(cmd.c_str(), "r"), pclose);
 
@@ -636,7 +640,36 @@ void startPython()
     }
 }
 
-bool useSecureChannel = true;
+std::shared_ptr<HandShakeClient> createSecureClient(std::string addr) {
+    grpc::ChannelArguments channel_args;
+    channel_args.SetMaxSendMessageSize(1024 * 1024 * 1024);    // 1GB
+    channel_args.SetMaxReceiveMessageSize(1024 * 1024 * 1024); // 1GB
+       // Load the server certificate for the secure connection
+    std::string server_cert;
+    std::ifstream cert_file("server.crt");
+    server_cert.assign(std::istreambuf_iterator<char>(cert_file), std::istreambuf_iterator<char>());
+    grpc::SslCredentialsOptions ssl_opts;
+    ssl_opts.pem_root_certs = server_cert;
+
+    std::shared_ptr<grpc::ChannelCredentials> credentials = grpc::SslCredentials(ssl_opts);
+    std::shared_ptr<grpc::Channel> secure_channel = grpc::CreateCustomChannel(addr, credentials, channel_args);
+    WaitForChannelReady(secure_channel);
+    std::shared_ptr<HandShakeClient> hcp = std::make_shared<HandShakeClient>(secure_channel);
+    return hcp;
+}
+
+std::shared_ptr<HandShakeClient> createInSecureClient(std::string addr) {
+    grpc::ChannelArguments channel_args;
+    channel_args.SetMaxSendMessageSize(1024 * 1024 * 1024);    // 1GB
+    channel_args.SetMaxReceiveMessageSize(1024 * 1024 * 1024); // 1GB
+    std::shared_ptr<grpc::ChannelCredentials> credentials = grpc::InsecureChannelCredentials()  ;
+    std::shared_ptr<grpc::Channel> insecure_channel = grpc::CreateCustomChannel(addr, credentials, channel_args);
+    WaitForChannelReady(insecure_channel);
+    std::shared_ptr<HandShakeClient> hcp = std::make_shared<HandShakeClient>(insecure_channel);
+    return hcp;
+}
+
+bool tls = false;
 
 int main(int argc, char **argv)
 {
@@ -661,9 +694,13 @@ int main(int argc, char **argv)
         {
             inprocessPython = false;
         }
-        if (starts_with(s, "--secure"))
+        if (starts_with(s, "--secure") || (starts_with(s, "--tls")))
         {
-            useSecureChannel = true;
+            tls = true;
+        }
+        if (starts_with(s, "--nosecure") || (starts_with(s, "--notls")))
+        {
+            tls = false;
         }
         if (starts_with(s, "--ports"))
         {
@@ -682,24 +719,11 @@ int main(int argc, char **argv)
     if (inprocessPython)
     {
         std::cout << "inProcess" << std::endl;
-        pythrd = std::thread(startPython);                             // , std::cref(ports));
+        pythrd = std::thread(startPython, argc, argv);                             // , std::cref(ports));
         std::this_thread::sleep_for(std::chrono::milliseconds(10000)); // let other thread acquire the lock
         std::cout << "Waiting on lock" << std::endl;
         std::unique_lock<std::mutex> lock(vector_mutex);
         std::cout << "Processing output in primordial thread" << std::endl;
-
-        // TODO temporarily get the ports from the text file until separate vector population after subprocess bugs cleared
-        // std::ifstream portfile("ports.txt"); // Open the file
-        // if (portfile)
-        // {
-        //     std::istream_iterator<int> start(portfile), end;
-        //     ports.assign(start, end); // Read integers into the vector
-        // }
-        // else
-        // {
-        //     std::cerr << "Error opening file!\n";
-        //     return 1;
-        // }
     }
     else
     {
@@ -728,59 +752,54 @@ int main(int argc, char **argv)
     }
     std::cout << std::endl;
     std::cout << "Server " << server << std::endl;
-    // std::thread pythrd = {};
-    // if (inprocessPython)
-    // {
-    //     std::cout << "Launching inprocess Python";
-    //     pythrd = std::thread(startPipe, epc, "krm_pyapp.py", argc, argv, ports);
-    //     sleep(1);
-    // }
-    // else
-    // {
-    //     std::cout << "Attaching to remote out of process aggregation server " << std::endl;
-    // }
 
     std::cout << "Starting multi-threaded C++ krm_capp talking to multiprocess krm_pyapp" << std::endl;
     // List of server addresses
     std::vector<std::string> server_addresses;
     for (auto p : ports)
         server_addresses.emplace_back(server + ":" + std::to_string(p));
-    std::vector<HandShakeClient *> clients;
+    std::vector<std::shared_ptr<HandShakeClient>> clients;
     // Vector to hold threads
     std::vector<std::thread> threads;
 
     // Launch threads for each server
+    std::cout << "TLS " << tls << std::endl;
     for (size_t i = 0; i < server_addresses.size(); ++i)
     {
-        grpc::ChannelArguments channel_args;
-        channel_args.SetMaxSendMessageSize(1024 * 1024 * 1024);    // 1GB
-        channel_args.SetMaxReceiveMessageSize(1024 * 1024 * 1024); // 1GB
         std::string addr = server_addresses[i];
-        std::cout << "Creating channel for " << addr << std::endl;
-        std::cout << "Using TLS security" << useSecureChannel << std::endl;
-        std::shared_ptr<grpc::Channel> channel;
-        if (useSecureChannel)
-        {
-            // Load the server certificate
-            std::string server_cert;
-            std::ifstream cert_file("server.crt");
-            server_cert.assign(std::istreambuf_iterator<char>(cert_file), std::istreambuf_iterator<char>());
-
-            // Configure secure channel with max receive message size
-            grpc::SslCredentialsOptions ssl_opts;
-            ssl_opts.pem_root_certs = server_cert;
-
-            channel = grpc::CreateCustomChannel(addr, grpc::SslCredentials(ssl_opts), channel_args);
-        }
+        std::shared_ptr<HandShakeClient> client;
+        if(tls) 
+            client = createSecureClient(addr);
         else
-        {
+            client = createInSecureClient(addr);
+        clients.push_back(client);
 
-            channel = grpc::CreateCustomChannel(addr, grpc::InsecureChannelCredentials(), channel_args);
-        }
+        // grpc::ChannelArguments channel_args;
+        // channel_args.SetMaxSendMessageSize(1024 * 1024 * 1024);    // 1GB
+        // channel_args.SetMaxReceiveMessageSize(1024 * 1024 * 1024); // 1GB
+        // std::cout << "Creating channel for " << addr << std::endl;
+        // std::cout << "Using TLS security" << tls << std::endl;
 
-        WaitForChannelReady(channel);
-        HandShakeClient *client = new HandShakeClient(channel);
-        clients.emplace_back(client);
+        // std::shared_ptr<grpc::ChannelCredentials> credentials;
+        // if (tls)
+        // {
+        //     std::string server_cert;
+        //     // Load the server certificate
+        //     std::ifstream cert_file("server.crt");
+        //     server_cert.assign(std::istreambuf_iterator<char>(cert_file), std::istreambuf_iterator<char>());
+        //     grpc::SslCredentialsOptions ssl_opts;
+        //     ssl_opts.pem_root_certs = server_cert;
+        //     credentials = grpc::SslCredentials(ssl_opts);
+        // }
+        // else
+        // {
+        //     credentials = grpc::InsecureChannelCredentials();
+        // }
+
+        // std::shared_ptr<grpc::Channel> channel = grpc::CreateCustomChannel(addr, credentials, channel_args);
+        // WaitForChannelReady(channel);
+        // HandShakeClient *client = new HandShakeClient(channel);
+        // clients.emplace_back(client);
     }
 
     // std::cout << "Wait for socket binding" << std::endl;
