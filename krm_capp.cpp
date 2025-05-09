@@ -8,7 +8,10 @@
 #include <string>
 #include <thread>
 #include <fstream>
-
+#include <unistd.h>
+#include <sys/prctl.h>
+#include <sys/types.h>
+#include <sys/signal.h>
 #include "handshake.grpc.pb.h"
 #include <filesystem>
 
@@ -581,70 +584,225 @@ void RunClient(std::shared_ptr<HandShakeClient> client, const std::vector<std::s
     }
 }
 
+// int ensureChildDeath(FILE *pipe)
+// {
+//     // Get the file descriptor of the pipe
+//     int fd = fileno(pipe);
+//     if (fd == -1)
+//     {
+//         std::cerr << "fileno() failed!" << std::endl;
+//         pclose(pipe);
+//         return 1;
+//     }
+
+//     // Get the process ID of the child process
+//     pid_t child_pid = fcntl(fd, F_GETOWN);
+//     if (child_pid == -1)
+//     {
+//         std::cerr << "fcntl() failed!" << std::endl;
+//         pclose(pipe);
+//         return 1;
+//     }
+
+//     // Set the PR_SET_PDEATHSIG option to send SIGKILL if the parent dies
+//     if (prctl(PR_SET_PDEATHSIG, SIGKILL) == -1)
+//     {
+//         std::cerr << "prctl() failed!" << std::endl;
+//         pclose(pipe);
+//         return 1;
+//     }
+//     return 0;
+// }
 std::vector<int> ports;
 std::mutex vector_mutex;
 
 void startPython(int argc, char **argv)
 {
     std::unique_lock<std::mutex> lock(vector_mutex);
-    std::cout << "Launching user exit" << std::endl;
-    std::string cmd = "python3.11 krm_pyapp.py";
-    for(int i=1;i<argc;i++) {
-        cmd += " ";
-        cmd += argv[i];
-    }
-    std::cout << cmd << std::endl;
-    std::shared_ptr<FILE> pipe(popen(cmd.c_str(), "r"), pclose);
-
-    if (!pipe)
+    int pipefd[2];
+    if (pipe(pipefd) == -1)
     {
-        std::cerr << "Unable to launch python" << std::endl;
+        perror("pipe");
         exit(1);
     }
-    std::cout << "process launched, capturing output" << std::endl;
-    // lock.unlock();
 
-    char buffer[64];
-    bool first = true;
-    std::string initialString = "";
-    while (fgets(buffer, sizeof(buffer), pipe.get()) != nullptr)
+    pid_t pid = fork();
+    if (pid == -1)
     {
-        std::cout << buffer;
-        if (first)
+        perror("fork");
+        exit(1);
+    }
+
+    if (pid == 0)
+    {                     // Child Process (Python)
+        close(pipefd[0]); // Close unused read end
+
+        // Set PR_SET_PDEATHSIG to terminate child if parent dies
+        prctl(PR_SET_PDEATHSIG, SIGTERM);
+
+        // Redirect stdout to pipe
+        dup2(pipefd[1], STDOUT_FILENO);
+        close(pipefd[1]);
+
+        // Prepare execv arguments using std::vector
+        std::vector<std::string> args;
+        args.push_back(".venv/bin/python3.11");
+        args.push_back("krm_pyapp.py");
+
+        for (int i = 1; i < argc; ++i)
         {
-            std::string multiline_string = buffer;
-            //  buffering until first complete line read for ports
-            initialString = initialString + multiline_string;
-            if (initialString.find('\n') != std::string::npos)
+            args.push_back(argv[i]); // Collect parent arguments
+        }
+
+        // Convert std::vector<std::string> to char* array for execv
+        std::vector<char *> execArgs;
+        for (auto &arg : args)
+        {
+            // std::cout << arg << ' ' ;
+            execArgs.push_back(const_cast<char *>(arg.c_str()));
+        }
+        // std::cout << std::endl;
+        execArgs.push_back(nullptr); // Null-terminate the list
+
+        // Execute Python script with arguments
+
+        execv(args[0].c_str(), execArgs.data());
+
+        perror("execv"); // If execv fails
+        exit(1);
+    }
+    else
+    {                     // Parent Process (C++)
+        close(pipefd[1]); // Close unused write end
+
+        bool first = true;
+        // std::string initialString = "";
+        std::string multiline_string = "";
+        char buffer[128];
+        while (true)
+        {
+            ssize_t bytesRead = read(pipefd[0], buffer, sizeof(buffer) - 1);
+            if (bytesRead > 0)
             {
-                std::string first_line;
-
-                std::istringstream stream(multiline_string);
-                // Read first line into a buffer
-                std::getline(stream, first_line);
-
-                // Parse space-separated integers
-                std::vector<int> numbers;
-                std::istringstream line_stream(first_line);
-                int num;
-
-                while (line_stream >> num)
+                buffer[bytesRead] = '\0';
+                // std::cout << "Python Output: " << buffer << std::endl;
+                std::cout << buffer;
+                if (first)
                 {
-                    std::cout << "Port " << num << std::endl;
-                    ports.push_back(num);
+                    // std::string multiline_string = buffer;
+                    //  buffering until first complete line read for ports
+                    // initialString = initialString + multiline_string;
+                    multiline_string += buffer;
+                    // if (initialString.find('\n') != std::string::npos)
+                    if (multiline_string.find('\n') != std::string::npos)
+                    {
+                        // std::cout << "Reading ports" << std::endl;
+                        // std::cout << "ml=" << multiline_string << std::endl;
+
+                        std::string first_line;
+
+                        std::istringstream stream(multiline_string);
+
+                        // Read first line into a buffer
+                        std::getline(stream, first_line);
+                        // std::cout << "fl=" << first_line << std::endl;
+
+
+                        // Parse space-separated integers
+                        std::vector<int> numbers;
+                        std::istringstream line_stream(first_line);
+                        int num;
+
+                        while (line_stream >> num)
+                        {
+                            std::cout << "Port " << num << std::endl;
+                            ports.push_back(num);
+                        }
+                        first = false;
+                        lock.unlock();
+                    }
                 }
-                first = false;
-                lock.unlock();
+            }
+            else
+            {
+                break; // Exit when pipe closes
             }
         }
+
+        close(pipefd[0]);
+        std::cout << "Parent exiting, Python process should terminate..." << std::endl;
     }
+
+    return;
 }
 
-std::shared_ptr<HandShakeClient> createSecureClient(std::string addr) {
+// void oldStartPython(int argc, char **argv)
+// {
+//     std::unique_lock<std::mutex> lock(vector_mutex);
+//     std::cout << "Launching user exit" << std::endl;
+//     std::string cmd = "python3.11 krm_pyapp.py";
+//     for (int i = 1; i < argc; i++)
+//     {
+//         cmd += " ";
+//         cmd += argv[i];
+//     }
+//     std::cout << cmd << std::endl;
+//     // std::shared_ptr<FILE> pipe(popen(cmd.c_str(), "r"), pclose);
+//     FILE *pipe = popen(cmd.c_str(), "r");
+
+//     if (!pipe)
+//     {
+//         std::cerr << "Unable to launch python" << std::endl;
+//         exit(1);
+//     }
+//     ensureChildDeath(pipe);
+//     std::cout << "process launched, capturing output" << std::endl;
+//     // lock.unlock();
+
+//     char buffer[64];
+//     bool first = true;
+//     std::string initialString = "";
+//     // while (fgets(buffer, sizeof(buffer), pipe.get()) != nullptr)
+//     while (fgets(buffer, sizeof(buffer), pipe) != nullptr)
+//     {
+//         std::cout << buffer;
+//         if (first)
+//         {
+//             std::string multiline_string = buffer;
+//             //  buffering until first complete line read for ports
+//             initialString = initialString + multiline_string;
+//             if (initialString.find('\n') != std::string::npos)
+//             {
+//                 std::string first_line;
+
+//                 std::istringstream stream(multiline_string);
+//                 // Read first line into a buffer
+//                 std::getline(stream, first_line);
+
+//                 // Parse space-separated integers
+//                 std::vector<int> numbers;
+//                 std::istringstream line_stream(first_line);
+//                 int num;
+
+//                 while (line_stream >> num)
+//                 {
+//                     std::cout << "Port " << num << std::endl;
+//                     ports.push_back(num);
+//                 }
+//                 first = false;
+//                 lock.unlock();
+//             }
+//         }
+//     }
+//     pclose(pipe);
+// }
+
+std::shared_ptr<HandShakeClient> createSecureClient(std::string addr)
+{
     grpc::ChannelArguments channel_args;
     channel_args.SetMaxSendMessageSize(1024 * 1024 * 1024);    // 1GB
     channel_args.SetMaxReceiveMessageSize(1024 * 1024 * 1024); // 1GB
-       // Load the server certificate for the secure connection
+                                                               // Load the server certificate for the secure connection
     std::string server_cert;
     std::ifstream cert_file("server.crt");
     server_cert.assign(std::istreambuf_iterator<char>(cert_file), std::istreambuf_iterator<char>());
@@ -658,11 +816,12 @@ std::shared_ptr<HandShakeClient> createSecureClient(std::string addr) {
     return hcp;
 }
 
-std::shared_ptr<HandShakeClient> createInSecureClient(std::string addr) {
+std::shared_ptr<HandShakeClient> createInSecureClient(std::string addr)
+{
     grpc::ChannelArguments channel_args;
     channel_args.SetMaxSendMessageSize(1024 * 1024 * 1024);    // 1GB
     channel_args.SetMaxReceiveMessageSize(1024 * 1024 * 1024); // 1GB
-    std::shared_ptr<grpc::ChannelCredentials> credentials = grpc::InsecureChannelCredentials()  ;
+    std::shared_ptr<grpc::ChannelCredentials> credentials = grpc::InsecureChannelCredentials();
     std::shared_ptr<grpc::Channel> insecure_channel = grpc::CreateCustomChannel(addr, credentials, channel_args);
     WaitForChannelReady(insecure_channel);
     std::shared_ptr<HandShakeClient> hcp = std::make_shared<HandShakeClient>(insecure_channel);
@@ -719,8 +878,8 @@ int main(int argc, char **argv)
     if (inprocessPython)
     {
         std::cout << "inProcess" << std::endl;
-        pythrd = std::thread(startPython, argc, argv);                             // , std::cref(ports));
-        std::this_thread::sleep_for(std::chrono::milliseconds(10000)); // let other thread acquire the lock
+        pythrd = std::thread(startPython, argc, argv);                 // , std::cref(ports));
+        std::this_thread::sleep_for(std::chrono::milliseconds(1000)); // let other thread acquire the lock
         std::cout << "Waiting on lock" << std::endl;
         std::unique_lock<std::mutex> lock(vector_mutex);
         std::cout << "Processing output in primordial thread" << std::endl;
@@ -768,7 +927,7 @@ int main(int argc, char **argv)
     {
         std::string addr = server_addresses[i];
         std::shared_ptr<HandShakeClient> client;
-        if(tls) 
+        if (tls)
             client = createSecureClient(addr);
         else
             client = createInSecureClient(addr);
