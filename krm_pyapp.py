@@ -117,7 +117,7 @@ class HandShakeServer(handshake_pb2_grpc.HandShakeServicer):
         
         # Print the received data
         if not self.printed:
-            print(f"PID {os.getpid()} receiving frames like ")
+            print(f"Python:: PID {os.getpid()} receiving frames like ")
             print(df)
             sys.stdout.flush()
             self.printed = True
@@ -448,12 +448,7 @@ def serve(q, id:int = 10, tls:bool = False):
         
     server.start()
     q.put(newport)
-    # with open('ports.txt','a') as pfl:
-    #     pfl.write(str(newport)+' ')
-    # server.add_insecure_port("[::]:" + port)
-    # server.start()
     # print(f"Server started, listening on {newport} from PID={os.getpid()=}")
-    
     sys.stdout.flush()
     
     server.wait_for_termination()
@@ -503,15 +498,15 @@ if __name__ == "__main__":
     for p in ports:
         print(str(p),end=' ')
     print()
-    print(f"TLS encrytion {tls}")
+    print(f"Python:: TLS encrytion {tls}")
     sys.stdout.flush()
 
     # ports = []
     # with open('ports.txt','r') as fl:
     #     line = fl.readline()
     #     ports = [int(x) for x in line.split()]
-    print(f"Started grpc servers on {ports}") 
-    print("Waiting for servers to receive termination from krm_capp controller")
+    print(f"Python:: Started grpc servers on {ports}") 
+    print("Python:: Waiting for servers to receive termination from krm_capp controller")
     sys.stdout.flush()
     for process in processes:
         process.join()

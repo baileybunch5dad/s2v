@@ -679,53 +679,30 @@ void startPython(int argc, char **argv)
         // std::string initialString = "";
         std::string multiline_string = "";
         char buffer[128];
-        while (true)
+        ssize_t bytesRead;
+        while ((bytesRead = read(pipefd[0], buffer, sizeof(buffer) - 1)) > 0)
         {
-            ssize_t bytesRead = read(pipefd[0], buffer, sizeof(buffer) - 1);
-            if (bytesRead > 0)
+            buffer[bytesRead] = '\0';
+            std::cout << buffer;
+            if (first)
             {
-                buffer[bytesRead] = '\0';
-                // std::cout << "Python Output: " << buffer << std::endl;
-                std::cout << buffer;
-                if (first)
+                multiline_string += buffer;
+                if (multiline_string.find('\n') != std::string::npos)
                 {
-                    // std::string multiline_string = buffer;
-                    //  buffering until first complete line read for ports
-                    // initialString = initialString + multiline_string;
-                    multiline_string += buffer;
-                    // if (initialString.find('\n') != std::string::npos)
-                    if (multiline_string.find('\n') != std::string::npos)
+                    std::string first_line;
+                    std::istringstream stream(multiline_string);
+                    std::getline(stream, first_line);
+                    std::vector<int> numbers;
+                    std::istringstream line_stream(first_line);
+                    int num;
+                    while (line_stream >> num)
                     {
-                        // std::cout << "Reading ports" << std::endl;
-                        // std::cout << "ml=" << multiline_string << std::endl;
-
-                        std::string first_line;
-
-                        std::istringstream stream(multiline_string);
-
-                        // Read first line into a buffer
-                        std::getline(stream, first_line);
-                        // std::cout << "fl=" << first_line << std::endl;
-
-
-                        // Parse space-separated integers
-                        std::vector<int> numbers;
-                        std::istringstream line_stream(first_line);
-                        int num;
-
-                        while (line_stream >> num)
-                        {
-                            std::cout << "Port " << num << std::endl;
-                            ports.push_back(num);
-                        }
-                        first = false;
-                        lock.unlock();
+                        std::cout << "Port " << num << std::endl;
+                        ports.push_back(num);
                     }
+                    first = false;
+                    lock.unlock();
                 }
-            }
-            else
-            {
-                break; // Exit when pipe closes
             }
         }
 
@@ -837,7 +814,7 @@ int main(int argc, char **argv)
     bool inprocessPython = true;
     // std::vector<int> ports = {50051, 50052, 50053, 50054};
     std::vector<std::string> externalServers = {};
-    bool shutdown = false;
+    bool shutdown = true;
     std::thread pythrd;
     // std::vector<int> ports;
 
@@ -873,12 +850,16 @@ int main(int argc, char **argv)
         {
             shutdown = true;
         }
+        if (starts_with(s, "--noshutdown"))
+        {
+            shutdown = false;
+        }
     }
 
     if (inprocessPython)
     {
         std::cout << "inProcess" << std::endl;
-        pythrd = std::thread(startPython, argc, argv);                 // , std::cref(ports));
+        pythrd = std::thread(startPython, argc, argv);                // , std::cref(ports));
         std::this_thread::sleep_for(std::chrono::milliseconds(1000)); // let other thread acquire the lock
         std::cout << "Waiting on lock" << std::endl;
         std::unique_lock<std::mutex> lock(vector_mutex);
@@ -1009,10 +990,10 @@ int main(int argc, char **argv)
         }
     }
 
-    // if (pythrd.joinable())
-    // {
-    //     pythrd.join();
-    // }
+    if (pythrd.joinable())
+    {
+        pythrd.join();
+    }
 
     exit(0);
 
