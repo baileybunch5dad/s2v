@@ -14,7 +14,7 @@
 #include <sys/signal.h>
 #include "handshake.grpc.pb.h"
 #include <filesystem>
-
+#include <cassert>
 // Arrow and Parquet headers
 #include <arrow/api.h>
 #include <arrow/io/api.h>
@@ -303,8 +303,10 @@ public:
         }
         else
         {
-            std::cout << "RPC failed: " << status.error_message() << std::endl;
-            return "RPC failed: " + status.error_message();
+            std::cout << "ProcessData" << std::endl;
+            std::cout << status.error_code() << ": " << status.error_message()
+                      << std::endl;
+            exit(1);
         }
     }
     std::string Shutdown()
@@ -324,7 +326,7 @@ public:
             std::cout << "Shutdown" << std::endl;
             std::cout << status.error_code() << ": " << status.error_message()
                       << std::endl;
-            return "RPC failed";
+            exit(1);
         }
     }
 
@@ -347,7 +349,7 @@ public:
             std::cout << "Hello failure" << std::endl;
             std::cout << status.error_code() << ": " << status.error_message()
                       << std::endl;
-            return "RPC failed";
+            exit(1);
         }
     }
 
@@ -371,10 +373,10 @@ public:
         }
         else
         {
-            std::cout << "AggregateLocal failure" << std::endl;
-            std::cout << status.error_code() << ": " << status.error_message()
+            std::cerr << "AggregateLocal failure" << std::endl;
+            std::cerr << status.error_code() << ": " << status.error_message()
                       << std::endl;
-            return (-1);
+            exit(1);
         }
     }
 
@@ -402,17 +404,18 @@ public:
         }
         else
         {
-            std::cout << "AggregateGlobal failure" << std::endl;
-            std::cout << status.error_code() << ": " << status.error_message()
+            std::cerr << "AggregateGlobal failure" << std::endl;
+            std::cerr << status.error_code() << ": " << status.error_message()
                       << std::endl;
-            return (-1);
+            exit(1);
         }
     }
 };
 
 void WaitForChannelReady(const std::shared_ptr<grpc::Channel> &channel, int max_attempts = 10, int delay_ms = 500)
 {
-    for (int i = 0; i < max_attempts; ++i)
+    int current_attempt{};
+    while(true)
     {
         // Get the current channel state
         auto state = channel->GetState(true);
@@ -430,10 +433,10 @@ void WaitForChannelReady(const std::shared_ptr<grpc::Channel> &channel, int max_
 
         // Sleep for the specified delay
         std::this_thread::sleep_for(std::chrono::milliseconds(delay_ms));
+        current_attempt++;
+        assert(current_attempt < max_attempts);
     }
 
-    std::cerr << "Channel did not become ready within the timeout period." << std::endl;
-    exit(1);
 }
 
 std::vector<int> stringToArrayOfInts(const std::string &inputString)

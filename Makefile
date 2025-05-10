@@ -1,6 +1,8 @@
 CXX = g++
 CXXFLAGS = -std=c++17  -I/home/chris/.local/include `python3.11-config --embed --cflags` 
 
+CXXFLAGS = -std=c++17  -I/home/chris/.local/include  -I/usr/local/include/python3.11 -I/usr/local/include/python3.11  -Wsign-compare -g -fwrapv -O3 -Wall
+
 CBLDSTUFF = \
 	/home/chris/.local/lib64/libabsl_flags_parse.a  \
 	/home/chris/.local/lib/libgrpc++_reflection.a  \
