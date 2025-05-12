@@ -79,7 +79,7 @@ class HandShakeServer(handshake_pb2_grpc.HandShakeServicer):
             for grpid, grp in grps:
                 # print(f"On {os.getpid()=} adding {grpid=}")
                 # print(grp)
-                key = grpid[0]
+                key = str(grpid[0])
                 if key not in self.hists.keys():
                     dd = DynamicDist()
                     self.hists[key] = dd
@@ -132,7 +132,7 @@ class HandShakeServer(handshake_pb2_grpc.HandShakeServicer):
         for grpid, grp in grps:
             # print(f"On {os.getpid()=} adding {grpid=}")
             # print(grp)
-            key = grpid[0]
+            key = str(grpid[0])
             if key not in self.hists.keys():
                 dd = DynamicDist()
                 self.hists[key] = dd
@@ -236,7 +236,7 @@ class HandShakeServer(handshake_pb2_grpc.HandShakeServicer):
         for grpid, grp in grps:
             # print(f"On {os.getpid()=} adding {grpid=}")
             # print(grp)
-            key = grpid[0]
+            key = str(grpid[0])
             if key not in self.hists.keys():
                 dd = DynamicDist()
                 self.hists[key] = dd
@@ -251,14 +251,15 @@ class HandShakeServer(handshake_pb2_grpc.HandShakeServicer):
         # allhists = []
         v = []
         for k,dd in self.hists.items():
-            name="Scenario#"+str(int(k))
-            rbins, rhist = dd.histogram(n_bins=100)
+            name=str(k)
+            rbins, rhist, rnan_freq = dd.get_merge_data()
+            # rbins, rhist = dd.histogram(n_bins=100) # Skip, get raw data instead
             double_array_np = np.array(rbins, dtype=np.float64)
             int_array_np = np.array(rhist, dtype=np.int32)
             # print(f"{name=} {int_array_np=} {double_array_np=}")
             d = handshake_pb2.SingleHistogram(name=name, int_array=int_array_np, double_array=double_array_np)
             v.append(d)
-        print(f"Return histograms and resetting hash from {os.getpid()}")
+        # print(f"Return histograms and resetting hash from {os.getpid()}")
         self.hists = {}
 
         # for i in range(4):
@@ -279,13 +280,48 @@ class HandShakeServer(handshake_pb2_grpc.HandShakeServicer):
         return response
 
 
+    # convert GRPC struct to 
+    # { 
+    # scenario1: {data=[], freqs=[]}, 
+    # scenario2: {data=[], freqs=[]}
+    # }
+    def convert_to_native_dict(self, response):
+        map_of_hists = {}
+        for h in response.histograms:
+            remote_key = h.name
+            remote_data = np.array(list(h.double_array), dtype=np.float64)
+            remote_freqs = np.array(list(h.int_array), dtype=np.int32)
+            map_of_hists[remote_key] = { 'data': remote_data, 'freq': remote_freqs}
+        return map_of_hists
+    
+    def merge(self, mapOfHists): 
+        # print(f"Local keys: {self.hists.keys()}")
+        # print(f"Remote keys: {mapOfHists.keys()}")
+        localMerge = 0
+        localAdd = 0
+        for remote_key, subdict in mapOfHists.items():
+            remote_data = subdict['data']
+            remote_freqs = subdict['freq']
+            if remote_key in self.hists.keys():
+                # print(f"{remote_key=} present in both")
+                localdd = self.hists[remote_key]
+                localdd.merge(remote_data, remote_freqs)
+                localMerge += 1
+            else:
+                print(f"{remote_key=} not present in local, adding")
+                localdd = DynamicDist()
+                localdd.merge(remote_data, remote_freqs)
+                self.hists[remote_key] = localdd
+                localAdd += 1
+        print(f"map of distribution merges, {localAdd} keys added, {localMerge} distributions merged")
+                            
     def AggregateLocal(self, request, context):
         print(f"On {os.getpid()=} AggregateLocal")
         try:
             ports: np.array = np.array(request.ports, dtype=int)
             if len(ports) > 1:
-                # for p in ports[1:]:
-                for p in ports:
+                for p in ports[1:]:
+                # for p in ports:
                     channelName = "localhost:" + str(p)
                     print(f'Thread 0 aggregating its results with {channelName}')
                     if self.credentials is not None:
@@ -293,26 +329,18 @@ class HandShakeServer(handshake_pb2_grpc.HandShakeServicer):
                     else:
                         channel = grpc.insecure_channel(channelName)
                     stub = handshake_pb2_grpc.HandShakeStub(channel)
-                    # print(f'Thread 0 aggregating its results with {channelName}')
+                    print(f'Thread 0 aggregating its results with {channelName}')
                     request = handshake_pb2.GetHistogramsRequest(code=1)
                     otherThreadResults = stub.GetHistograms(request)
-                    nPrinted = 0
-                    for h in otherThreadResults.histograms:
-                        scenario = h.name
-                        scenario_bins = list(h.double_array)
-                        scenario_freqs = list(h.int_array)
-                        nPrinted += 1
-                        if nPrinted < 5:
-                            print(f"Name: {scenario}")
-                            print(f"Hist: {scenario_bins}")
-                            print(f"Bins: {scenario_freqs}")
+                    self.merge(self.convert_to_native_dict(otherThreadResults))
                     # tr = tail_risk.tail_risk(scenario_bins, scenario_freqs, dist="GPD")
             else:
                 print('Thread 0 aggregating as sole thread')
+            print(f"After aggregation have {len(self.hists.keys())} distribution keys")
             return handshake_pb2.AggregateLocalResponse(return_code=0)
         except Exception as e:
             stack_trace = traceback.format_exc()
-            # Return error response
+            print(stack_trace)
             error_message = f"{str(e)}\n{stack_trace}"
             context.set_details(error_message)
             context.set_code(grpc.StatusCode.INTERNAL)
@@ -324,7 +352,7 @@ class HandShakeServer(handshake_pb2_grpc.HandShakeServicer):
         print(f"On {os.getpid()=} AggregateGlobal")
         if len(request.servers) > 0:
             hosts: np.array = np.array(request.servers, dtype=str)
-            for channelName in hosts:
+            for channelName in hosts[1:]:
                 # channelName = server + ":" + str(ports[0])
                 print(f'Server 0 aggregating globally its results with {channelName}')
                 if self.credentials is not None:

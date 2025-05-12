@@ -82,7 +82,7 @@ class HandShakeClient:
         """Load a Parquet file into a PyArrow Table and send it to the server."""
         try:
             # Read the Parquet file into a PyArrow Table
-            print(f"PID {os.getpid()} Loading Parquet file: {parquet_file}")
+            # print(f"PID {os.getpid()} Loading Parquet file: {parquet_file}")
             table = pq.read_table(parquet_file)
             return self.send_table(table)
         except Exception as e:
@@ -105,7 +105,7 @@ class HandShakeClient:
             )
             
             # Send the request
-            print(f"PID {os.getpid()} sending Arrow Table with {table.num_rows} rows and {table.num_columns} columns")
+            # print(f"PID {os.getpid()} sending Arrow Table with {table.num_rows} rows and {table.num_columns} columns")
             response = self.stub.ProcessArrowStream(request)
             
             if response.success:
