@@ -15,7 +15,7 @@ import handshake_pb2_grpc
 
 class HandShakeClient:
     def __init__(self, server_address, useSecureChannel):
-        print(f"Initializing a 'thread' for dedicated communication: TLS {useSecureChannel}")        
+        print(f"Initializing a 'thread' for dedicated communication to {server_address}: TLS {useSecureChannel}")        
         if useSecureChannel:
             with open("server.crt", "rb") as f:
                 trusted_certs = f.read()
@@ -24,6 +24,14 @@ class HandShakeClient:
             self.channel = grpc.secure_channel(server_address, credentials)
         else:
             self.channel = grpc.insecure_channel(server_address)
+        # try:
+        #     print("Establishing communication with channel")
+        #     grpc.channel_ready_future(self.channel).result(timeout=10)
+        #     print("Channel is ready!")
+        # except grpc.FutureTimeoutError:
+        #     print("Failed to connect to the server within the timeout period.")
+        #     exit()
+
         self.stub = handshake_pb2_grpc.HandShakeStub(self.channel)
         
         
@@ -38,6 +46,24 @@ class HandShakeClient:
             print(f"Error aggregating locally: {e.code()}: {e.details()}")
             return False
 
+    def aggregate_global(self, servers):
+        request = handshake_pb2.AggregateGlobalRequest(servers=servers)
+        try:
+            response = self.stub.AggregateGlobal(request)
+            print(f"Server response: {response.return_code}")
+            return True
+        except grpc.RpcError as e:
+            print(f"Error aggregating locally: {e.code()}: {e.details()}")
+            return False
+
+    def send_shutdown(self):
+        request = handshake_pb2.ShutdownRequest()
+        try:
+            response = self.stub.Shutdown(request)
+        except grpc.RpcError as e:
+            print(f"ShutDown Error: {e.code()}: {e.details()}")
+            return False
+            
 
 
     def say_hello(self, name):
@@ -49,7 +75,8 @@ class HandShakeClient:
             return True
         except grpc.RpcError as e:
             print(f"Error saying hello: {e.code()}: {e.details()}")
-            return False
+            print(f"Exiting PID {os.getpid()}")
+            exit(1)
     
     def send_table_from_parquet(self, parquet_file):
         """Load a Parquet file into a PyArrow Table and send it to the server."""
@@ -178,8 +205,10 @@ if __name__ == "__main__":
 
     useSecureChannel = False
     for argument in sys.argv[1:]:
-        if argument.startswith("--secure"):
+        if argument.startswith("--secure") or argument.startswith("--tls"):
             useSecureChannel = True
+        if argument.startswith("--nosecure") or argument.startswith("--notls"):
+            useSecureChannel = False
     # ports = [50051,50052,50053,50054]
     server_addresses = ['localhost:' + str(i) for i in ports]
     sublists = [[],[],[],[],[]]
@@ -211,8 +240,17 @@ if __name__ == "__main__":
     print("Saying hello to the server...")
     client.say_hello(f"KRM_CAPP_EMULATOR TLS={useSecureChannel}")
     
-    # First, say hello
+    # First, aggregate locally
     client.aggregate_local(ports)
 
+    # then globally
+    client.aggregate_global(server_addresses)
+    
+    # now shut down each server
+    for server_address in server_addresses:
+        client = HandShakeClient(server_address, useSecureChannel)
+        client.send_shutdown()
+
+    print("Finished")
 
 

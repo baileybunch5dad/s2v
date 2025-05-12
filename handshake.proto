@@ -153,8 +153,7 @@ message AggregateLocalResponse {
 }
 
 message AggregateGlobalRequest {
-  repeated int32 ports = 1;
-  repeated string servers = 2;
+  repeated string servers = 1;
 }
 
 message AggregateGlobalResponse {

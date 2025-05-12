@@ -36,6 +36,9 @@ class HandShakeServer(handshake_pb2_grpc.HandShakeServicer):
     #     self.server = server
         # self.logger = logging.getLogger('HandShakeService')
 
+    def addStopEvent(self, stop_event):
+        self._stop_event = stop_event
+        
     def setOptions(self, port, id, server, credentials):
         self.port = port
         self.id = id
@@ -53,15 +56,17 @@ class HandShakeServer(handshake_pb2_grpc.HandShakeServicer):
             # Deserialize the Arrow table
             reader = pa.ipc.open_stream(io.BytesIO(serialized_table))
 
+            # pull evreything off the socket
             arrow_table = reader.read_all()
 
+            # in a C call, convert the byte stream to a pandas dataframe
             df = arrow_table.to_pandas()
 
             if not self.printed:
                 print(df)
                 self.printed = True
 
-
+            # also in C, gather the data in different groupby to stream them as arrays to the distribution finder 
             grps = df.groupby(by=['scenario'])
 
             if grps is None:
@@ -117,7 +122,7 @@ class HandShakeServer(handshake_pb2_grpc.HandShakeServicer):
         
         # Print the received data
         if not self.printed:
-            print(f"Python:: PID {os.getpid()} receiving frames like ")
+            print(f"Pqython:: PID {os.getpid()} receiving frames like ")
             print(df)
             sys.stdout.flush()
             self.printed = True
@@ -318,13 +323,17 @@ class HandShakeServer(handshake_pb2_grpc.HandShakeServicer):
     def AggregateGlobal(self, request, context):
         print(f"On {os.getpid()=} AggregateGlobal")
         if len(request.servers) > 0:
-            ports: np.array = np.array(request.ports, dtype=int)
             hosts: np.array = np.array(request.servers, dtype=str)
-            for server in hosts:
-                channelName = server + ":" + str(ports[0])
+            for channelName in hosts:
+                # channelName = server + ":" + str(ports[0])
                 print(f'Server 0 aggregating globally its results with {channelName}')
-                channel = grpc.insecure_channel(channelName)
+                if self.credentials is not None:
+                    channel = grpc.secure_channel(channelName, self.credentials)
+                else:
+                    channel = grpc.insecure_channel(channelName)
                 stub = handshake_pb2_grpc.HandShakeStub(channel)
+                # channel = grpc.insecure_channel(channelName)
+                # stub = handshake_pb2_grpc.HandShakeStub(channel)
                 # print(f'Server 0 aggregating its results with {channelName}')
                 otherThreadResults = stub.GetResults(handshake_pb2.GetResultsRequest(which_results=1))
                 print(f'Server thread 0 received this response from {channelName}')
@@ -381,10 +390,12 @@ class HandShakeServer(handshake_pb2_grpc.HandShakeServicer):
     
     def Shutdown(self, request, context):
         print(f"Shutdown RPC called. Post message to terminate server.  {self.port=}")
-        shutdown_thread = threading.Thread(target=self._shutdown, args=())
-        shutdown_thread.daemon = True
-        shutdown_thread.start()
-        print(f"Daemon thread started, returning.  {self.port=}")
+        self._stop_event.set()
+        # return my_service_pb2.ShutdownResponse()
+        # shutdown_thread = threading.Thread(target=self._shutdown, args=())
+        # shutdown_thread.daemon = True
+        # shutdown_thread.start()
+        # print(f"Daemon thread started, returning.  {self.port=}")
         return handshake_pb2.ShutdownResponse(status=f"Server shutting down {self.port=}")
 
     def _shutdown(self):
@@ -446,12 +457,18 @@ def serve(q, id:int = 10, tls:bool = False):
         newport = server.add_insecure_port('[::]:0')
         hs.setOptions(newport, id, server, None)
         
+    stop_event = threading.Event()
+    hs.addStopEvent(stop_event)
     server.start()
     q.put(newport)
     # print(f"Server started, listening on {newport} from PID={os.getpid()=}")
     sys.stdout.flush()
     
-    server.wait_for_termination()
+    # server.wait_for_termination()
+    stop_event.wait()
+    print("Shutting down server")
+    server.stop(grace=5).wait()
+    
     # print("Waiting on stop event")    
 
 # Profile the function and save output to a file

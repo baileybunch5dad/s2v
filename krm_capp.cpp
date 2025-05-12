@@ -51,6 +51,18 @@ class HandShakeClient
 private:
     std::unique_ptr<handshake::HandShake::Stub> stub_;
 
+    void checkGrpcStatus(const grpc::Status &status)
+    {
+        if (!status.ok())
+        {
+            std::cerr << "gRPC call failed!\n"
+                      << "Error Code: " << status.error_code() << "\n"
+                      << "Error Message: " << status.error_message() << "\n"
+                      << "Error Details: " << status.error_details() << std::endl;
+            std::abort();
+        }
+    }
+
     // Simple function to serialize an Arrow Table to a Buffer
     arrow::Result<std::shared_ptr<arrow::Buffer>> SerializeTableToBuffer(
         const std::shared_ptr<arrow::Table> &table)
@@ -179,20 +191,9 @@ public:
 
         grpc::Status status = stub_->ProcessArrowStream(&context, request, &response);
 
-        if (status.ok())
-        {
-
-            std::cout << "Table sent successfully: " << response.message() << std::endl;
-
-            return response.success();
-        }
-        else
-        {
-
-            std::cerr << "Error sending table: " << status.error_message() << std::endl;
-
-            return false;
-        }
+        checkGrpcStatus(status);
+        std::cout << response.message() << std::endl;
+        return response.success();
     }
 
     std::string ProcessData(std::shared_ptr<arrow::Table> &table)
@@ -295,20 +296,10 @@ public:
 
         // Call RPC
         grpc::Status status = stub_->ProcessData(&context, request, &response);
-
-        // Check status
-        if (status.ok())
-        {
-            return response.status();
-        }
-        else
-        {
-            std::cout << "ProcessData" << std::endl;
-            std::cout << status.error_code() << ": " << status.error_message()
-                      << std::endl;
-            exit(1);
-        }
+        checkGrpcStatus(status);
+        return response.status();
     }
+
     std::string Shutdown()
     {
         handshake::ShutdownRequest request;
@@ -316,18 +307,8 @@ public:
         grpc::ClientContext context;
 
         grpc::Status status = stub_->Shutdown(&context, request, &response);
-
-        if (status.ok())
-        {
-            return response.status();
-        }
-        else
-        {
-            std::cout << "Shutdown" << std::endl;
-            std::cout << status.error_code() << ": " << status.error_message()
-                      << std::endl;
-            exit(1);
-        }
+        checkGrpcStatus(status);
+        return response.status();
     }
 
     std::string Hello(std::string instr)
@@ -339,18 +320,8 @@ public:
         std::cout << "invoke Hello(" << instr << ")" << std::endl;
         request.set_name(instr.c_str());
         grpc::Status status = stub_->Hello(&context, request, &response);
-        std::cout << "Status ok " << status.ok() << std::endl;
-        if (status.ok())
-        {
-            return response.reply();
-        }
-        else
-        {
-            std::cout << "Hello failure" << std::endl;
-            std::cout << status.error_code() << ": " << status.error_message()
-                      << std::endl;
-            exit(1);
-        }
+        checkGrpcStatus(status);
+        return response.reply();
     }
 
     int AggregateLocal(const std::vector<int> &ports)
@@ -365,28 +336,13 @@ public:
         handshake::AggregateLocalResponse response;
         grpc::ClientContext context;
         grpc::Status status = stub_->AggregateLocal(&context, request, &response);
-
-        // Handle the response
-        if (status.ok())
-        {
-            return response.return_code();
-        }
-        else
-        {
-            std::cerr << "AggregateLocal failure" << std::endl;
-            std::cerr << status.error_code() << ": " << status.error_message()
-                      << std::endl;
-            exit(1);
-        }
+        checkGrpcStatus(status);
+        return response.return_code();
     }
 
-    int AggregateGlobal(const std::vector<int> &ports, const std::vector<std::string> &servers)
+    int AggregateGlobal(const std::vector<std::string> &servers)
     {
         handshake::AggregateGlobalRequest request;
-        for (int p : ports)
-        {
-            request.add_ports(p);
-        }
         for (std::string s : servers)
         {
             request.add_servers(s);
@@ -396,26 +352,15 @@ public:
         handshake::AggregateGlobalResponse response;
         grpc::ClientContext context;
         grpc::Status status = stub_->AggregateGlobal(&context, request, &response);
-
-        // Handle the response
-        if (status.ok())
-        {
-            return response.return_code();
-        }
-        else
-        {
-            std::cerr << "AggregateGlobal failure" << std::endl;
-            std::cerr << status.error_code() << ": " << status.error_message()
-                      << std::endl;
-            exit(1);
-        }
+        checkGrpcStatus(status);
+        return response.return_code();
     }
 };
 
 void WaitForChannelReady(const std::shared_ptr<grpc::Channel> &channel, int max_attempts = 10, int delay_ms = 500)
 {
     int current_attempt{};
-    while(true)
+    while (true)
     {
         // Get the current channel state
         auto state = channel->GetState(true);
@@ -436,7 +381,6 @@ void WaitForChannelReady(const std::shared_ptr<grpc::Channel> &channel, int max_
         current_attempt++;
         assert(current_attempt < max_attempts);
     }
-
 }
 
 std::vector<int> stringToArrayOfInts(const std::string &inputString)
@@ -455,10 +399,12 @@ std::vector<int> stringToArrayOfInts(const std::string &inputString)
         catch (const std::invalid_argument &ia)
         {
             std::cerr << "Invalid argument: " << ia.what() << " for token: " << token << std::endl;
+            std::abort();
         }
         catch (const std::out_of_range &oor)
         {
             std::cerr << "Out of range error: " << oor.what() << " for token: " << token << std::endl;
+            std::abort();
         }
     }
     return intArray;
@@ -641,7 +587,7 @@ void startPython(int argc, char **argv)
         close(pipefd[0]); // Close unused read end
 
         // Set PR_SET_PDEATHSIG to terminate child if parent dies
-        prctl(PR_SET_PDEATHSIG, SIGTERM);
+        // prctl(PR_SET_PDEATHSIG, SIGTERM);
 
         // Redirect stdout to pipe
         dup2(pipefd[1], STDOUT_FILENO);
@@ -980,7 +926,7 @@ int main(int argc, char **argv)
     std::cout << "Local aggregation within threads commencing" << std::endl;
     clients[0]->AggregateLocal(ports);
     std::cout << "Global aggregation across servers commencing" << std::endl;
-    clients[0]->AggregateGlobal(ports, externalServers);
+    clients[0]->AggregateGlobal(server_addresses);
     std::cout << "Aggregation finished" << std::endl;
 
     // clients[0]->SendDataFrame();
