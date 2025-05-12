@@ -1,4 +1,4 @@
-#include <Python.h>
+// #include <Python.h>
 #include "absl/flags/flag.h"
 #include "absl/flags/parse.h"
 #include <ctime>
@@ -770,7 +770,7 @@ int main(int argc, char **argv)
     for (int i = 1; i < argc; i++)
     {
         std::string s = argv[i];
-        std::string o = "--server";
+        // std::string o = "--server";
         if (starts_with(s, "--server"))
         {
             server = parmval(s, "--server");

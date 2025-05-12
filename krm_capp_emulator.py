@@ -194,6 +194,7 @@ def capp_thread(server_address, flist, useSecureChannel):
         
 
 if __name__ == "__main__":
+    server = "localhost"
     # mainTest()
     FOLDER_PATH='./parquet'
     parquetflist = [os.path.join(root, file) for root, dirs, files in os.walk(FOLDER_PATH) for file in files if file.endswith(".parquet") and file.startswith("MV_OUT")]
@@ -209,8 +210,10 @@ if __name__ == "__main__":
             useSecureChannel = True
         if argument.startswith("--nosecure") or argument.startswith("--notls"):
             useSecureChannel = False
+        if argument.startswith("--server"):
+            server = argument[9:]
     # ports = [50051,50052,50053,50054]
-    server_addresses = ['localhost:' + str(i) for i in ports]
+    server_addresses = [server + ':' + str(i) for i in ports]
     sublists = [[],[],[],[],[]]
     which = 0
     for f in parquetflist:
