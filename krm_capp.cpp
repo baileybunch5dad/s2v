@@ -317,18 +317,18 @@ public:
         grpc::ClientContext context;
         grpc::Status status = stub_->GetState(&context, request, &response);
         checkGrpcStatus(status);
-        return response.workerstatus();
+        auto state = response.workerstatus();
+        return state;
     }
 
-    handshake::DistStatus set_state(handshake::DistStatus newstate) {
+    void set_state(handshake::DistStatus newstate) {
         handshake::StateMessage request;
-        handshake::StateMessage response;
+        handshake::EmptyResponse response;
         request.set_workerstatus(newstate);
         grpc::ClientContext context;
         grpc::Status status = stub_->SetState(&context, request, &response);
         checkGrpcStatus(status);
-        handshake::DistStatus oldstate = response.workerstatus();
-        return oldstate;
+        return;
     }
     std::string Hello(std::string instr)
     {
@@ -817,13 +817,13 @@ int main(int argc, char **argv)
 {
     // EmbeddedPythonController *epc = new EmbeddedPythonController();
     std::string server = "localhost";
-    bool inprocessPython = true;
+    bool inprocessPython = false;
     // std::vector<int> ports = {50051, 50052, 50053, 50054};
     std::vector<std::string> externalServers = {};
     bool shutdown = true;
     std::thread pythrd;
     // std::vector<int> ports;
-    bool controller;
+    bool controller = false;
 
     std::cout << argv[0] << "Running  on " << getfqdn() << std::endl;
 
@@ -838,6 +838,10 @@ int main(int argc, char **argv)
         if (starts_with(s, "--external"))
         {
             inprocessPython = false;
+        }
+        if (starts_with(s, "--embedded"))
+        {
+            inprocessPython = true;
         }
         if (starts_with(s, "--secure") || (starts_with(s, "--tls")))
         {

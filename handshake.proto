@@ -4,7 +4,7 @@ package handshake;
 
 
 service HandShake {
-  rpc SetState(StateMessage) returns (StateMessage) {}
+  rpc SetState(StateMessage) returns (EmptyResponse) {}
   rpc GetState(EmptyRequest) returns (StateMessage) {}
   rpc ProcessArrowStream(ArrowTableRequest) returns (ArrowTableResponse) {}
   rpc ProcessData(Table) returns (StringResponse) {}
@@ -27,11 +27,19 @@ enum DistStatus {
   COMPLETED = 5;
 }
 
+message SingleInt {
+    int32 state = 1;
+}
+
 message StateMessage {
   DistStatus workerstatus = 1;
 }
 
 message EmptyRequest {
+}
+
+message EmptyResponse {
+
 }
 
 

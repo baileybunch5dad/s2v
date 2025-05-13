@@ -250,30 +250,6 @@ class HandShakeServer(handshake_pb2_grpc.HandShakeServicer):
             dd.add_many(histdata)
         return handshake_pb2.ArrayResponse(message="Array received successfully!")
 
-    def GetState(self, request, context):
-        try:
-            return handshake_pb2.DistStatus(workerstatus=self._status)
-        except Exception as e:
-            stack_trace = traceback.format_exc()
-            # Return error response
-            error_message = f"{str(e)}\n{stack_trace}"
-            context.set_details(error_message)
-            context.set_code(grpc.StatusCode.INTERNAL)
-            return handshake_pb2.DistStatus(workerstatus=self._status)
-       
-    
-    def SetState(self, request, context):
-        try:
-            oldStatus = self._status
-            self._status = request.DistStatus.workerstatus
-            return handshake_pb2.DistStatus(workerstatus=oldStatus)
-        except Exception as e:
-            stack_trace = traceback.format_exc()
-            # Return error response
-            error_message = f"{str(e)}\n{stack_trace}"
-            context.set_details(error_message)
-            context.set_code(grpc.StatusCode.INTERNAL)
-            return handshake_pb2.DistStatus(workerstatus=self._status)
     
     def GetHistograms(self, request, context):
         # allhists = []
@@ -377,34 +353,29 @@ class HandShakeServer(handshake_pb2_grpc.HandShakeServicer):
                 )
 
     def AggregateGlobal(self, request, context):
-        print(f"On {os.getpid()=} AggregateGlobal")
         thishost = socket.gethostname()
-        processedhosts = set()
-        set.add(thishost)
+        print(f"On {os.getpid()=} {thishost=} AggregateGlobal")
+        processedhosts = {}
+        processedhosts[thishost] = thishost
+        # set.add(thishost)
         allhosts = getAllHosts()
         try:
             for channelName in allhosts:
                 hname = channelName.split(":", 1)[0]
-                if hname in processhosts:
+                if hname in processedhosts.keys():
                     print(f"Already processed {channelName}")
                 else:
-                    # channelName = server + ":" + str(ports[0])
+                    processedhosts[hname] = hname
                     print(f'Server 0 aggregating globally its results with {channelName}')
                     if self.credentials is not None:
                         channel = grpc.secure_channel(channelName, self.credentials)
                     else:
                         channel = grpc.insecure_channel(channelName)
                     stub = handshake_pb2_grpc.HandShakeStub(channel)
-                    # channel = grpc.insecure_channel(channelName)
-                    # stub = handshake_pb2_grpc.HandShakeStub(channel)
-                    # print(f'Server 0 aggregating its results with {channelName}')
-                    print(f'Thread 0 aggregating its results with {channelName}')
-                    request = handshake_pb2.GetHistogramsRequest(code=1)
-                    otherThreadResults = stub.GetHistograms(request)
+                    otherThreadResults = stub.GetHistograms(handshake_pb2.GetHistogramsRequest(code=1))
                     self.merge(self.convert_to_native_dict(otherThreadResults))
-                    request = handshake_pb2.StateMessage(worker_status=handshake_pb2.COMPLETED)
-                    stub.SetState(request)
-                    return handshake_pb2.AggregateGlobalResponse(return_code=0)
+                    stub.SetState(handshake_pb2.StateMessage(workerstatus=handshake_pb2.COMPLETED))
+            return handshake_pb2.AggregateGlobalResponse(return_code=0)
         except Exception as e:
             stack_trace = traceback.format_exc()
             print(stack_trace)
@@ -446,9 +417,8 @@ class HandShakeServer(handshake_pb2_grpc.HandShakeServicer):
         return handshake_pb2.StateMessage(workerstatus=self._status)
     
     def SetState(self, request, context):
-        old_status = self._status
-        self._status = handshake_pb2.StateMessage.workerstatus
-        return handshake_pb2.StateMessage(workerstatus=old_status)
+        self._status = request.workerstatus
+        return handshake_pb2.EmptyResponse()
     
     def Hello(self, request, context):
         instr = str(request.name)
@@ -563,7 +533,7 @@ def getconnection() -> psycopg2.extensions.connection:
     return conn
 
 def execsql(exstmt: str) -> None:
-    print(exstmt)
+    # print(exstmt)
     conn = getconnection()
     cur = conn.cursor()
     cur.execute(exstmt)
@@ -586,7 +556,7 @@ def removeHostFromTable(thishost):
 def getAllHosts():
     sqlstmt = 'SELECT channel FROM rpcchannels;'
     conn = getconnection()
-    print(sqlstmt)
+    # print(sqlstmt)
     cursor = conn.cursor()
     cursor.execute(sqlstmt)
     channels = [row[0] for row in cursor.fetchall()]
@@ -638,7 +608,8 @@ if __name__ == "__main__":
     with open('ports.txt','w') as portfl:
         for p in ports:
             portfl.write(str(p) + ' ')
-            addHostToTable(curhost + ":" + str(p))
+            channelName = curhost + ":" + str(p)
+            addHostToTable(channelName)
     for p in ports:
         print(str(p),end=' ')
     print()
