@@ -626,3 +626,8 @@ if __name__ == "__main__":
     sys.stdout.flush()
     for process in processes:
         process.join()
+        
+    print("Removing channels from rcp table as they have been taken down")
+    for p in ports:
+        channelName = curhost + ":" + str(p)
+        removeHostFromTable(channelName)        
