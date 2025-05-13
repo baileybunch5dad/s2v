@@ -311,6 +311,25 @@ public:
         return response.status();
     }
 
+    handshake::DistStatus get_state() {
+        handshake::EmptyRequest request;
+        handshake::StateMessage response;
+        grpc::ClientContext context;
+        grpc::Status status = stub_->GetState(&context, request, &response);
+        checkGrpcStatus(status);
+        return response.workerstatus();
+    }
+
+    handshake::DistStatus set_state(handshake::DistStatus newstate) {
+        handshake::StateMessage request;
+        handshake::StateMessage response;
+        request.set_workerstatus(newstate);
+        grpc::ClientContext context;
+        grpc::Status status = stub_->SetState(&context, request, &response);
+        checkGrpcStatus(status);
+        handshake::DistStatus oldstate = response.workerstatus();
+        return oldstate;
+    }
     std::string Hello(std::string instr)
     {
         handshake::HelloRequest request;
@@ -754,6 +773,44 @@ std::shared_ptr<HandShakeClient> createInSecureClient(std::string addr)
     return hcp;
 }
 
+#include <iostream>
+#include <cstring>
+#include <unistd.h>
+#include <netdb.h>
+
+std::string getfqdn() {
+    char hostname[256];
+    if (gethostname(hostname, sizeof(hostname)) != 0) {
+        std::cerr << "Failed to get hostname" << std::endl;
+        std::abort();
+    }
+
+    struct addrinfo hints{}, *res;
+    hints.ai_family = AF_INET; // Can also use AF_INET6 for IPv6
+    hints.ai_socktype = SOCK_STREAM;
+
+    if (getaddrinfo(hostname, nullptr, &hints, &res) != 0) {
+        std::cerr << "Failed to resolve hostname" << std::endl;
+        std::abort();
+    }
+
+    char fqdn[256];
+    if (getnameinfo(res->ai_addr, res->ai_addrlen, fqdn, sizeof(fqdn), nullptr, 0, NI_NAMEREQD) != 0) {
+        std::cerr << "Failed to get FQDN" << std::endl;
+        freeaddrinfo(res);
+        std::abort();
+    }
+
+    freeaddrinfo(res);
+
+    std::string fqdnstr = fqdn;
+    std::string hoststr = hostname;
+    assert(fqdnstr.size() > 0);
+    // std::cout << "Fully Qualified Domain Name: " << fqdn << std::endl;
+    return hoststr;
+}
+
+
 bool tls = false;
 
 int main(int argc, char **argv)
@@ -766,6 +823,9 @@ int main(int argc, char **argv)
     bool shutdown = true;
     std::thread pythrd;
     // std::vector<int> ports;
+    bool controller;
+
+    std::cout << argv[0] << "Running  on " << getfqdn() << std::endl;
 
     for (int i = 1; i < argc; i++)
     {
@@ -802,6 +862,9 @@ int main(int argc, char **argv)
         if (starts_with(s, "--noshutdown"))
         {
             shutdown = false;
+        }
+        if(starts_with(s, "--controller")) {
+            controller = true;
         }
     }
 
@@ -925,11 +988,24 @@ int main(int argc, char **argv)
     }
     std::cout << "Local aggregation within threads commencing" << std::endl;
     clients[0]->AggregateLocal(ports);
-    std::cout << "Global aggregation across servers commencing" << std::endl;
-    clients[0]->AggregateGlobal(server_addresses);
     std::cout << "Aggregation finished" << std::endl;
 
+    for(auto cl : clients) {
+        cl->set_state(handshake::DistStatus::WAITING_GLOBAL_SIGNAL);
+    }
+
     // clients[0]->SendDataFrame();
+
+    if(controller) {
+        std::cout << "Controller: Global aggregation across servers commencing" << std::endl;
+        clients[0]->AggregateGlobal(server_addresses);
+    } else {
+        std::cout << "Not controller: Worker waitinbg for external controller to aggregate globally" << std::endl;
+        while(clients[0]->get_state() != handshake::DistStatus::COMPLETED) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(1000)); // let other thread acquire the lock
+        }
+        std::cout << "Worker completed" << std::endl;
+    }
 
     if (shutdown)
     {

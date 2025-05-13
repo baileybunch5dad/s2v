@@ -17,6 +17,8 @@ import pyarrow as pa
 import io
 from datetime import datetime
 import traceback
+import socket
+import psycopg2
 
 # ports = [50051,50052,50053,50054]
 # if len(sys.argv) > 1:
@@ -46,6 +48,7 @@ class HandShakeServer(handshake_pb2_grpc.HandShakeServicer):
         self.hists = {}
         self.printed = False
         self.credentials = credentials
+        self._status = handshake_pb2.NOT_STARTED;
 
     def ProcessArrowStream(self, request, context):
         """Receives a serialized Arrow table, deserializes it, and processes it."""
@@ -247,6 +250,31 @@ class HandShakeServer(handshake_pb2_grpc.HandShakeServicer):
             dd.add_many(histdata)
         return handshake_pb2.ArrayResponse(message="Array received successfully!")
 
+    def GetState(self, request, context):
+        try:
+            return handshake_pb2.DistStatus(workerstatus=self._status)
+        except Exception as e:
+            stack_trace = traceback.format_exc()
+            # Return error response
+            error_message = f"{str(e)}\n{stack_trace}"
+            context.set_details(error_message)
+            context.set_code(grpc.StatusCode.INTERNAL)
+            return handshake_pb2.DistStatus(workerstatus=self._status)
+       
+    
+    def SetState(self, request, context):
+        try:
+            oldStatus = self._status
+            self._status = request.DistStatus.workerstatus
+            return handshake_pb2.DistStatus(workerstatus=oldStatus)
+        except Exception as e:
+            stack_trace = traceback.format_exc()
+            # Return error response
+            error_message = f"{str(e)}\n{stack_trace}"
+            context.set_details(error_message)
+            context.set_code(grpc.StatusCode.INTERNAL)
+            return handshake_pb2.DistStatus(workerstatus=self._status)
+    
     def GetHistograms(self, request, context):
         # allhists = []
         v = []
@@ -350,30 +378,43 @@ class HandShakeServer(handshake_pb2_grpc.HandShakeServicer):
 
     def AggregateGlobal(self, request, context):
         print(f"On {os.getpid()=} AggregateGlobal")
-        if len(request.servers) > 0:
-            hosts: np.array = np.array(request.servers, dtype=str)
-            for channelName in hosts[1:]:
-                # channelName = server + ":" + str(ports[0])
-                print(f'Server 0 aggregating globally its results with {channelName}')
-                if self.credentials is not None:
-                    channel = grpc.secure_channel(channelName, self.credentials)
+        thishost = socket.gethostname()
+        processedhosts = set()
+        set.add(thishost)
+        allhosts = getAllHosts()
+        try:
+            for channelName in allhosts:
+                hname = channelName.split(":", 1)[0]
+                if hname in processhosts:
+                    print(f"Already processed {channelName}")
                 else:
-                    channel = grpc.insecure_channel(channelName)
-                stub = handshake_pb2_grpc.HandShakeStub(channel)
-                # channel = grpc.insecure_channel(channelName)
-                # stub = handshake_pb2_grpc.HandShakeStub(channel)
-                # print(f'Server 0 aggregating its results with {channelName}')
-                otherThreadResults = stub.GetResults(handshake_pb2.GetResultsRequest(which_results=1))
-                print(f'Server thread 0 received this response from {channelName}')
-                dname: str = otherThreadResults.doublename
-                dvals: np.array = np.array(otherThreadResults.doublevalues, dtype=np.float64)
-                sname: str = otherThreadResults.stringname
-                svals: np.array = np.array(otherThreadResults.stringvalues, dtype=str)
-                df = pd.DataFrame({dname: dvals, sname: svals})
-                print(df.round(2))
-        else:
-            print('Thread 0 aggregating globally as sole host')
-        return handshake_pb2.AggregateGlobalResponse(return_code=0)
+                    # channelName = server + ":" + str(ports[0])
+                    print(f'Server 0 aggregating globally its results with {channelName}')
+                    if self.credentials is not None:
+                        channel = grpc.secure_channel(channelName, self.credentials)
+                    else:
+                        channel = grpc.insecure_channel(channelName)
+                    stub = handshake_pb2_grpc.HandShakeStub(channel)
+                    # channel = grpc.insecure_channel(channelName)
+                    # stub = handshake_pb2_grpc.HandShakeStub(channel)
+                    # print(f'Server 0 aggregating its results with {channelName}')
+                    print(f'Thread 0 aggregating its results with {channelName}')
+                    request = handshake_pb2.GetHistogramsRequest(code=1)
+                    otherThreadResults = stub.GetHistograms(request)
+                    self.merge(self.convert_to_native_dict(otherThreadResults))
+                    request = handshake_pb2.StateMessage(worker_status=handshake_pb2.COMPLETED)
+                    stub.SetState(request)
+                    return handshake_pb2.AggregateGlobalResponse(return_code=0)
+        except Exception as e:
+            stack_trace = traceback.format_exc()
+            print(stack_trace)
+            error_message = f"{str(e)}\n{stack_trace}"
+            context.set_details(error_message)
+            context.set_code(grpc.StatusCode.INTERNAL)
+            return handshake_pb2.AggregateLocalResponse(
+                return_code=1
+                )
+
     
     def SendDataFrame(self, request, context):
         print(request.columns)
@@ -401,6 +442,14 @@ class HandShakeServer(handshake_pb2_grpc.HandShakeServicer):
         print(pd.DataFrame(dct))
         return handshake_pb2.StringResponse(str="It worked")
 
+    def GetState(self, request, context):
+        return handshake_pb2.StateMessage(workerstatus=self._status)
+    
+    def SetState(self, request, context):
+        old_status = self._status
+        self._status = handshake_pb2.StateMessage.workerstatus
+        return handshake_pb2.StateMessage(workerstatus=old_status)
+    
     def Hello(self, request, context):
         instr = str(request.name)
         print(f"Hello from TestMethod, received {instr}  {os.getpid()=} ")
@@ -499,6 +548,53 @@ def serve(q, id:int = 10, tls:bool = False):
     
     # print("Waiting on stop event")    
 
+def getconnection() -> psycopg2.extensions.connection:
+    if 'PGPASSWORD' not in os.environ:
+        print('Need postgres connection environment variables PGHOST, PGPORT, PGDATABASE, PGUSER, PGPASSWORD, PGSCHEMA')
+        exit()
+    PGHOST = os.getenv('PGHOST')
+    PGPORT = os.getenv('PGPORT')
+    PGDATABASE = os.getenv('PGDATABASE')
+    PGUSER = os.getenv('PGUSER')
+    PGPASSWORD = os.getenv('PGPASSWORD')
+    PGSCHEMA = os.getenv('PGSCHEMA')
+    conn = psycopg2.connect(dbname=PGDATABASE, user=PGUSER, password=PGPASSWORD, host=PGHOST, port=PGPORT,
+                            options=f"-c search_path={PGSCHEMA}"    )
+    return conn
+
+def execsql(exstmt: str) -> None:
+    print(exstmt)
+    conn = getconnection()
+    cur = conn.cursor()
+    cur.execute(exstmt)
+    cur.close()
+    conn.commit()
+    conn.close()
+    
+def createChannelTable():
+    sqlstmt=f"CREATE TABLE IF NOT EXISTS rpcchannels (id SERIAL PRIMARY KEY, channel TEXT UNIQUE NOT NULL );"
+    execsql(sqlstmt)
+    
+def addHostToTable(thishost):
+    sqlstmt = f"INSERT INTO rpcchannels (channel) VALUES ('{thishost}') ON CONFLICT (channel) DO NOTHING;"
+    execsql(sqlstmt)
+    
+def removeHostFromTable(thishost):
+    sqlstmt = f"DELETE FROM rpcchannels WHERE channel='{thishost}';"
+    execsql(sqlstmt)
+    
+def getAllHosts():
+    sqlstmt = 'SELECT channel FROM rpcchannels;'
+    conn = getconnection()
+    print(sqlstmt)
+    cursor = conn.cursor()
+    cursor.execute(sqlstmt)
+    channels = [row[0] for row in cursor.fetchall()]
+    cursor.close()
+    conn.close()
+    return channels
+    
+
 # Profile the function and save output to a file
 def serve_with_profiling(q, port:int=50051, id: int=0):
     import cProfile
@@ -537,20 +633,24 @@ if __name__ == "__main__":
         ports.append(queue.get())
     queue.close()
 
+    curhost = socket.gethostname()
+    createChannelTable()
     with open('ports.txt','w') as portfl:
         for p in ports:
             portfl.write(str(p) + ' ')
+            addHostToTable(curhost + ":" + str(p))
     for p in ports:
         print(str(p),end=' ')
     print()
     print(f"Python:: TLS encrytion {tls}")
+    print(f"hosts={getAllHosts()}")
     sys.stdout.flush()
 
     # ports = []
     # with open('ports.txt','r') as fl:
     #     line = fl.readline()
     #     ports = [int(x) for x in line.split()]
-    print(f"Python:: Started grpc servers on {ports}") 
+    print(f"Python:: Started grpc servers on {ports} on host={socket.gethostname()} with fqdn={socket.getfqdn()}") 
     print("Python:: Waiting for servers to receive termination from krm_capp controller")
     sys.stdout.flush()
     for process in processes:

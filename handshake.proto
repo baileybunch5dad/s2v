@@ -4,6 +4,8 @@ package handshake;
 
 
 service HandShake {
+  rpc SetState(StateMessage) returns (StateMessage) {}
+  rpc GetState(EmptyRequest) returns (StateMessage) {}
   rpc ProcessArrowStream(ArrowTableRequest) returns (ArrowTableResponse) {}
   rpc ProcessData(Table) returns (StringResponse) {}
   rpc GetHistograms(GetHistogramsRequest) returns (MultipleHistograms) {}
@@ -15,6 +17,23 @@ service HandShake {
   rpc Hello (HelloRequest) returns (HelloResponse) {}  
   // rpc SendDataFrame(DataFrame) returns (StringResponse) {}
 }
+
+enum DistStatus {
+  NOT_STARTED=0;
+  COLLECTING_DATA=1;
+  BUILDING_LOCAL_AGGREGATIONS=2;
+  WAITING_GLOBAL_SIGNAL=3;
+  BUILDING_GLOBAL_AGGREGATIONS=4;
+  COMPLETED = 5;
+}
+
+message StateMessage {
+  DistStatus workerstatus = 1;
+}
+
+message EmptyRequest {
+}
+
 
 message ArrowTableRequest {
   bytes serialized_table = 1;
