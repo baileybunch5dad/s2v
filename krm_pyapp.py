@@ -48,7 +48,8 @@ class HandShakeServer(handshake_pb2_grpc.HandShakeServicer):
         self.hists = {}
         self.printed = False
         self.credentials = credentials
-        self._status = handshake_pb2.NOT_STARTED;
+        self._status = handshake_pb2.NOT_STARTED
+        self.error_count = 0
 
     def ProcessArrowStream(self, request, context):
         """Receives a serialized Arrow table, deserializes it, and processes it."""
@@ -256,15 +257,26 @@ class HandShakeServer(handshake_pb2_grpc.HandShakeServicer):
         v = []
         for k,dd in self.hists.items():
             name=str(k)
+            if len(dd.bins.keys()) == 0: # chris, returning empty lists
+                dd.load_bins()
+                if self.error_count < 5:
+                    print("DynamicDist Warning: Called DynamicDist.get_merge_data() before sample filled")
+                self.error_count += 1
+
             rbins, rhist, rnan_freq = dd.get_merge_data()
             # rbins, rhist = dd.histogram(n_bins=100) # Skip, get raw data instead
             double_array_np = np.array(rbins, dtype=np.float64)
             int_array_np = np.array(rhist, dtype=np.int32)
+            if len(double_array_np) < 5 or len(int_array_np) < 5:
+                if self.error_count < 5:
+                    print("DynamicDist Warning: <5 bins! {name}")
+                self.error_count += 1
+                
             # print(f"{name=} {int_array_np=} {double_array_np=}")
             d = handshake_pb2.SingleHistogram(name=name, int_array=int_array_np, double_array=double_array_np)
             v.append(d)
         # print(f"Return histograms and resetting hash from {os.getpid()}")
-        self.hists = {}
+        # self.hists = {}
 
         # for i in range(4):
         #     int_array_np = np.array(range(i+1,i+4))
@@ -309,14 +321,22 @@ class HandShakeServer(handshake_pb2_grpc.HandShakeServicer):
             if remote_key in self.hists.keys():
                 # print(f"{remote_key=} present in both")
                 localdd = self.hists[remote_key]
-                localdd.merge(remote_data, remote_freqs)
                 localMerge += 1
             else:
                 print(f"{remote_key=} not present in local, adding")
                 localdd = DynamicDist()
-                localdd.merge(remote_data, remote_freqs)
                 self.hists[remote_key] = localdd
                 localAdd += 1
+            if len(localdd.bins) < 5:
+                if self.error_count < 5:
+                    print(f"DynamicDist pre merge < 5 bins!!! n={localdd.n}")
+                localdd.load_bins()
+                self.error_count += 1
+            localdd.merge(remote_data, remote_freqs)
+            if len(localdd.bins) < 5:
+                if self.error_count < 5:
+                    print("DynamicDist After merge < 5 bins!!!")
+                self.error_count += 1
         print(f"map of distribution merges, {localAdd} keys added, {localMerge} distributions merged")
                             
     def AggregateLocal(self, request, context):
@@ -333,10 +353,10 @@ class HandShakeServer(handshake_pb2_grpc.HandShakeServicer):
                     else:
                         channel = grpc.insecure_channel(channelName)
                     stub = handshake_pb2_grpc.HandShakeStub(channel)
-                    print(f'Thread 0 aggregating its results with {channelName}')
                     request = handshake_pb2.GetHistogramsRequest(code=1)
                     otherThreadResults = stub.GetHistograms(request)
                     self.merge(self.convert_to_native_dict(otherThreadResults))
+                    stub.SetState(handshake_pb2.StateMessage(workerstatus=handshake_pb2.COMPLETED))
                     # tr = tail_risk.tail_risk(scenario_bins, scenario_freqs, dist="GPD")
             else:
                 print('Thread 0 aggregating as sole thread')
@@ -352,6 +372,50 @@ class HandShakeServer(handshake_pb2_grpc.HandShakeServicer):
                 return_code=1
                 )
 
+    def computeAndPersistTailRisk(self):
+        print(f"Computing Value and Risk and Expected Shortfall for {len(self.hists.keys())} scenarios")
+        tuples = []
+        for key,dd in self.hists.items():
+            if len(dd.bins.keys()) == 0: # chris, returning empty lists
+                if self.error_count < 5:
+                    print(f"DynamicDist Warning: Called DynamicDist.get_merge_data() before sample filled n={dd.n}")
+                self.error_count += 1
+                dd.load_bins()
+            data, freqs, nan_freq = dd.get_merge_data()
+            if len(data) < 5 or len(freqs) < 5:
+                if self.error_count < 5:
+                    print(f"DynamicDist Warning: < 5 bins !! {key=}")
+                self.error_count += 1
+            data = np.array(data, dtype=np.float64)
+            freqs = np.array(freqs, dtype=np.int32)
+            dist = "GPD"
+            alpha = 0.95
+            right_side = True
+            # df = 3
+            # trsh_pct = 0.9
+            # def tail_risk(data, freqs, alpha = 0.95, right_side = True, dist = None, df = None, trsh_pct = 0.9):
+            # print(f"{key=} datafirst5={data[:5]} freqsfirst5={freqs[:5]} {alpha=} {right_side=} {dist=}")
+            taildf = tail_risk.tail_risk(data, freqs, alpha, right_side, dist)
+            expected_shortfall = taildf.at[0.95,'ES']
+            value_at_risk = taildf.at[0.95,'VaR']
+            tuples.append((key, expected_shortfall, value_at_risk))
+        print("Creating buffer for bulkf insert")
+        csv_buffer = io.StringIO()
+        for row in tuples:
+            csv_buffer.write(",".join(map(str, row)) + "\n")
+        csv_buffer.seek(0)  # Move cursor to start
+        print("Inserting into database")
+        conn = getconnection()
+        cursor = conn.cursor()
+        cursor.execute("CREATE TABLE IF NOT EXISTS aggregations (scenario text, expected_shortfall float, value_at_risk float);")
+        # cursor.executemany("INSERT INTO aggregations (scenario, expected_shortfall, value_at_risk) VALUES (%s, %s, %s)", tuples)
+        cursor.copy_from(csv_buffer, 'aggregations', sep=",", columns=("scenario", "expected_shortfall", "value_at_risk"))
+        conn.commit()
+        cursor.close()
+        conn.close()
+          
+            
+        
     def AggregateGlobal(self, request, context):
         thishost = socket.gethostname()
         print(f"On {os.getpid()=} {thishost=} AggregateGlobal")
@@ -375,6 +439,8 @@ class HandShakeServer(handshake_pb2_grpc.HandShakeServicer):
                     otherThreadResults = stub.GetHistograms(handshake_pb2.GetHistogramsRequest(code=1))
                     self.merge(self.convert_to_native_dict(otherThreadResults))
                     stub.SetState(handshake_pb2.StateMessage(workerstatus=handshake_pb2.COMPLETED))
+            self.computeAndPersistTailRisk()
+            self._status = handshake_pb2.COMPLETED
             return handshake_pb2.AggregateGlobalResponse(return_code=0)
         except Exception as e:
             stack_trace = traceback.format_exc()
