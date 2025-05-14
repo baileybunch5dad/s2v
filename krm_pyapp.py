@@ -349,9 +349,9 @@ class HandShakeServer(handshake_pb2_grpc.HandShakeServicer):
                     channelName = "localhost:" + str(p)
                     print(f'Thread 0 aggregating its results with {channelName}')
                     if self.credentials is not None:
-                        channel = grpc.secure_channel(channelName, self.credentials)
+                        channel = grpc.secure_channel(channelName, self.credentials, options=channel_options())
                     else:
-                        channel = grpc.insecure_channel(channelName)
+                        channel = grpc.insecure_channel(channelName, options=channel_options())
                     stub = handshake_pb2_grpc.HandShakeStub(channel)
                     request = handshake_pb2.GetHistogramsRequest(code=1)
                     otherThreadResults = stub.GetHistograms(request)
@@ -432,10 +432,10 @@ class HandShakeServer(handshake_pb2_grpc.HandShakeServicer):
                     processedhosts[hname] = hname
                     print(f'Server 0 aggregating globally its results with {channelName}')
                     if self.credentials is not None:
-                        channel = grpc.secure_channel(channelName, self.credentials)
+                        channel = grpc.secure_channel(channelName, self.credentials, options=channel_options())
                     else:
                         channel = grpc.insecure_channel(channelName)
-                    stub = handshake_pb2_grpc.HandShakeStub(channel)
+                    stub = handshake_pb2_grpc.HandShakeStub(channel, options=channel_options())
                     otherThreadResults = stub.GetHistograms(handshake_pb2.GetHistogramsRequest(code=1))
                     self.merge(self.convert_to_native_dict(otherThreadResults))
                     stub.SetState(handshake_pb2.StateMessage(workerstatus=handshake_pb2.COMPLETED))
@@ -535,11 +535,6 @@ class HandShakeServer(handshake_pb2_grpc.HandShakeServicer):
 
 def serve(q, id:int = 10, tls:bool = False):
     # print(f"SUBPROCESS Use secure channel {tls}")
-    big_msg_options = [
-        ("grpc.max_send_message_length", 10 * 1024 * 1024),  # 10MB
-        ("grpc.max_receive_message_length", 1024 * 1024 * 1024)  # 1GB
-    ]
-    
     server = None
     hs = None
     newport = 0
@@ -553,7 +548,7 @@ def serve(q, id:int = 10, tls:bool = False):
 
         server_credentials = grpc.ssl_server_credentials([(private_key, certificate)])
         
-        server = grpc.server(futures.ThreadPoolExecutor(max_workers=5), options=big_msg_options)
+        server = grpc.server(futures.ThreadPoolExecutor(max_workers=5), options=channel_options())
         hs = HandShakeServer()
         handshake_pb2_grpc.add_HandShakeServicer_to_server(hs, server)
 
@@ -562,7 +557,7 @@ def serve(q, id:int = 10, tls:bool = False):
         hs.setOptions(newport, id, server, client_credentials)
 
     else:
-        server = grpc.server(futures.ThreadPoolExecutor(max_workers=5), options=big_msg_options)
+        server = grpc.server(futures.ThreadPoolExecutor(max_workers=5), options=channel_options())
         hs = HandShakeServer()
         handshake_pb2_grpc.add_HandShakeServicer_to_server(hs, server)
 
@@ -636,6 +631,13 @@ def gethostname():
     if fullname.endswith('.'):
         return partname
     return fullname
+
+def channel_options():
+    big_msg_options = [
+        ("grpc.max_send_message_length", 10 * 1024 * 1024),  # 10MB
+        ("grpc.max_receive_message_length", 1024 * 1024 * 1024)  # 1GB
+        ]
+    return big_msg_options
 
 # Profile the function and save output to a file
 def serve_with_profiling(q, port:int=50051, id: int=0):
