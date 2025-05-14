@@ -631,11 +631,11 @@ def getAllHosts():
     return channels
     
 def gethostname():
-    name1 = socket.gethostname()
-    name2 = socket.getfqdn()
-    if name2.endswith('.')
-        return name1
-    return name2
+    partname = socket.gethostname()
+    fullname = socket.getfqdn()
+    if fullname.endswith('.'):
+        return partname
+    return fullname
 
 # Profile the function and save output to a file
 def serve_with_profiling(q, port:int=50051, id: int=0):
