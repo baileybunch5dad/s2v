@@ -192,7 +192,11 @@ public:
         grpc::Status status = stub_->ProcessArrowStream(&context, request, &response);
 
         checkGrpcStatus(status);
-        std::cout << response.message() << std::endl;
+
+        // row_counter.fetch_add(table->num_rows(), std::memory_order_relaxed);
+        // std::cout << "Rows transferred " << row_counter.load()  << std::endl;
+
+        // std::cout << response.message() << std::endl;
         return response.success();
     }
 
@@ -583,6 +587,9 @@ void RunClient(std::shared_ptr<HandShakeClient> client, const std::vector<std::s
 // }
 std::vector<int> ports;
 std::mutex vector_mutex;
+// std::atomic<int> row_counter{0};
+
+
 
 void startPython(int argc, char **argv)
 {
