@@ -417,7 +417,7 @@ class HandShakeServer(handshake_pb2_grpc.HandShakeServicer):
             
         
     def AggregateGlobal(self, request, context):
-        thishost = socket.gethostname()
+        thishost = gethostname()
         print(f"On {os.getpid()=} {thishost=} AggregateGlobal")
         processedhosts = {}
         processedhosts[thishost] = thishost
@@ -630,6 +630,12 @@ def getAllHosts():
     conn.close()
     return channels
     
+def gethostname():
+    name1 = socket.gethostname()
+    name2 = socket.getfqdn()
+    if name2.endswith('.')
+        return name1
+    return name2
 
 # Profile the function and save output to a file
 def serve_with_profiling(q, port:int=50051, id: int=0):
@@ -669,7 +675,7 @@ if __name__ == "__main__":
         ports.append(queue.get())
     queue.close()
 
-    curhost = socket.gethostname()
+    curhost = gethostname()
     createChannelTable()
     with open('ports.txt','w') as portfl:
         for p in ports:
