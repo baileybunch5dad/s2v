@@ -22,6 +22,23 @@ import traceback
 import socket
 import psycopg2
 
+import io
+
+# Sample data: list of tuples (name, age)
+data = [
+    ("Alice", 25, 19.6),
+    ("Bob", 30, 17.8),
+    ("Charlie", 22, 99.3),
+]
+
+# Convert data to CSV format in memory
+csv_buffer = io.StringIO()
+for row in data:
+    csv_string = ",".join(map(str, row))
+    csv_buffer.write(csv_string + "\n")
+csv_buffer.seek(0)  # Move cursor to start
+print(csv_buffer.getvalue())
+
 
 channelName = "localhost:46693"
 channel = grpc.insecure_channel(channelName)

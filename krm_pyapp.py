@@ -19,6 +19,8 @@ from datetime import datetime
 import traceback
 import socket
 import psycopg2
+import pickle
+import collections
 
 # ports = [50051,50052,50053,50054]
 # if len(sys.argv) > 1:
@@ -207,6 +209,52 @@ class HandShakeServer(handshake_pb2_grpc.HandShakeServicer):
         pdf = pd.DataFrame(data)
         return pdf
 
+    def GetKeysAndData(self, request, context):
+        which_keys = self.extractRequest(request)
+        key_dd = {}
+        for key in which_keys:
+            if key in self.hists.keys():
+                key_dd[key] = self.hists[key]
+                del self.hists[key] # if giving the dd away for merger, remove local copy
+        return self.buildResponse(key_dd)
+  
+    def extractRequest(self, request):
+        return pickle.loads(request.data)
+
+    def extractResponse(self, response):
+        return pickle.loads(response.data)
+
+    def buildRequest(self, o):
+        return handshake_pb2.RequestObject(data=pickle.dumps(o))
+            
+    def buildResponse(self, o):
+        return handshake_pb2.ResponseObject(data=pickle.dumps(o))
+
+    # handle Exception calling application: cannot pickle \'dict_keys\' object
+    # because dict keys are a view
+    def GetKeysOnly(self, request, context):
+        return self.buildResponse(list(self.hists.keys()))
+
+    def MergeKeys(self, request, context):
+        print("Merge Keys!")
+        merge_req = self.extractRequest(request)
+        which_keys = merge_req['keys']
+        channels = merge_req['channels']
+        print(f"{channels=}")
+        stubs = [self.getStub(channel) for channel in channels]
+        key_list_of_dds = {}
+        for stub in stubs:
+            key_dd_dict = self.extractResponse(stub.GetKeysAndData(self.buildRequest(which_keys)))
+            for key,dd in key_dd_dict.items():
+                if key not in key_list_of_dds.keys():
+                    key_list_of_dds[key] = []
+                key_list_of_dds[key].append(dd)
+        self.hists = {}
+        for key,ddlist in key_list_of_dds.items():
+            self.hists[key] = DynamicDist.merge_many(ddlist)
+        retobj = {'status': 0, 'keys': list(self.hists.keys())}            
+        return self.buildResponse(retobj)
+        
     def SendTable(self, request, context):
         dname: str = request.doublename
         dvals: np.array = np.array(request.doublevalues, dtype=np.float64)
@@ -338,8 +386,98 @@ class HandShakeServer(handshake_pb2_grpc.HandShakeServicer):
                     print("DynamicDist After merge < 5 bins!!!")
                 self.error_count += 1
         print(f"map of distribution merges, {localAdd} keys added, {localMerge} distributions merged")
-                            
+        
+    def getStub(self, channelName):
+        if self.credentials is not None:
+            channel = grpc.secure_channel(channelName, self.credentials, options=channel_options())
+        else:
+            channel = grpc.insecure_channel(channelName, options=channel_options())
+        stub = handshake_pb2_grpc.HandShakeStub(channel)
+        return stub
+    
+    def PrepareLocalWork(self, request, context):
+        plw_req = self.extractRequest(request)
+        self.local_work = {}
+        self.local_work['keys'] = plw_req['keys']
+        self.local_work['channels'] = plw_req['channels']
+        return handshake_pb2.EmptyResponse()
+
+    def assignWork(self, channels):
+        try:
+            numWorkers = len(channels)
+            stubs = [self.getStub(channel) for channel in channels]
+            allKeysEveryWhere = []
+            for stub in stubs:
+                req = handshake_pb2.EmptyRequest()
+                resp = stub.GetKeysOnly(req)
+                respkeys = self.extractResponse(resp)
+                allKeysEveryWhere.extend(respkeys)
+            unique_keys = list(collections.OrderedDict.fromkeys(allKeysEveryWhere))
+            unique_keys = np.array(unique_keys)
+            chopped_keys = np.array_split(unique_keys, numWorkers)
+            for i in range(len(chopped_keys)):
+                parm = {'keys': chopped_keys[i], 'channels':  channels}
+                print(parm)
+                req = self.buildRequest(parm)
+                stub = stubs[i]
+                stub.PrepareLocalWork(req)
+            return handshake_pb2.EmptyResponse()
+        except Exception as e:
+            stack_trace = traceback.format_exc()
+            print(stack_trace)
+            error_message = f"{str(e)}\n{stack_trace}"
+            context.set_details(error_message)
+            context.set_code(grpc.StatusCode.INTERNAL)
+            return handshake_pb2.EmptyResponse()  
+
+        
+    def SetUpGlobalAggregation(self, request, context):
+        return self.assignWork(getAllHosts())
+    
+    def SetUpLocalAggregation(self, request, context):
+        ports: np.array = np.array(request.ports, dtype=int)
+        channels = ['localhost:' + str(p) for p in ports]
+        return self.assignWork(channels)
+
+    def do_merger_work(self):
+        try:
+            which_keys = self.local_work['keys']
+            channels = self.local_work['channels']
+            stubs = [self.getStub(channel) for channel in channels]
+            key_list_of_dds = {}
+            for stub in stubs:
+                key_dd_dict = self.extractResponse(stub.GetKeysAndData(self.buildRequest(which_keys)))
+                for key,dd in key_dd_dict.items():
+                    if key not in key_list_of_dds.keys():
+                        key_list_of_dds[key] = []
+                    key_list_of_dds[key].append(dd)
+            self.hists = {}
+            for key,ddlist in key_list_of_dds.items():
+                self.hists[key] = DynamicDist.merge_many(ddlist)
+            return handshake_pb2.AggregateLocalResponse(return_code=0)
+        except Exception as e:
+            stack_trace = traceback.format_exc()
+            print(stack_trace)
+            error_message = f"{str(e)}\n{stack_trace}"
+            context.set_details(error_message)
+            context.set_code(grpc.StatusCode.INTERNAL)
+            return handshake_pb2.AggregateLocalResponse(return_code=1)
+                                      
     def AggregateLocal(self, request, context):
+        print(f"On {os.getpid()=} AggregateLocal")
+        try:
+            self.do_merger_work()
+            return handshake_pb2.AggregateLocalResponse(return_code=0)
+        except Exception as e:
+            stack_trace = traceback.format_exc()
+            print(stack_trace)
+            error_message = f"{str(e)}\n{stack_trace}"
+            context.set_details(error_message)
+            context.set_code(grpc.StatusCode.INTERNAL)
+            return handshake_pb2.AggregateLocalResponse(return_code=1)
+                
+                                    
+    def OldAggregateLocal(self, request, context):
         print(f"On {os.getpid()=} AggregateLocal")
         try:
             ports: np.array = np.array(request.ports, dtype=int)
@@ -399,12 +537,11 @@ class HandShakeServer(handshake_pb2_grpc.HandShakeServicer):
             expected_shortfall = taildf.at[0.95,'ES']
             value_at_risk = taildf.at[0.95,'VaR']
             tuples.append((key, expected_shortfall, value_at_risk))
-        print("Creating buffer for bulkf insert")
+        print(f"PID={os.getpid()} inserting into database {len(tuples)} tuples")
         csv_buffer = io.StringIO()
         for row in tuples:
             csv_buffer.write(",".join(map(str, row)) + "\n")
         csv_buffer.seek(0)  # Move cursor to start
-        print("Inserting into database")
         conn = getconnection()
         cursor = conn.cursor()
         cursor.execute("CREATE TABLE IF NOT EXISTS aggregations (scenario text, expected_shortfall float, value_at_risk float);")
@@ -418,29 +555,13 @@ class HandShakeServer(handshake_pb2_grpc.HandShakeServicer):
         
     def AggregateGlobal(self, request, context):
         thishost = gethostname()
-        print(f"On {os.getpid()=} {thishost=} AggregateGlobal")
-        processedhosts = {}
-        processedhosts[thishost] = thishost
-        # set.add(thishost)
-        allhosts = getAllHosts()
+        print(f"On {os.getpid()=} {thishost=} AggregateGlobal commencing")
         try:
-            for channelName in allhosts:
-                hname = channelName.split(":", 1)[0]
-                if hname in processedhosts.keys():
-                    print(f"Already processed {channelName}")
-                else:
-                    processedhosts[hname] = hname
-                    print(f'Server 0 aggregating globally its results with {channelName}')
-                    if self.credentials is not None:
-                        channel = grpc.secure_channel(channelName, self.credentials, options=channel_options())
-                    else:
-                        channel = grpc.insecure_channel(channelName)
-                    stub = handshake_pb2_grpc.HandShakeStub(channel, options=channel_options())
-                    otherThreadResults = stub.GetHistograms(handshake_pb2.GetHistogramsRequest(code=1))
-                    self.merge(self.convert_to_native_dict(otherThreadResults))
-                    stub.SetState(handshake_pb2.StateMessage(workerstatus=handshake_pb2.COMPLETED))
+            self.do_merger_work()
+            print(f"On {os.getpid()=} {thishost=} Computing tail risk")
             self.computeAndPersistTailRisk()
             self._status = handshake_pb2.COMPLETED
+            print(f"On {os.getpid()=} {thishost=} AggregateGlobal completing")
             return handshake_pb2.AggregateGlobalResponse(return_code=0)
         except Exception as e:
             stack_trace = traceback.format_exc()
@@ -634,7 +755,7 @@ def gethostname():
 
 def channel_options():
     big_msg_options = [
-        ("grpc.max_send_message_length", 10 * 1024 * 1024),  # 10MB
+        ("grpc.max_send_message_length", 1024 * 1024 * 1024),  # 1GB
         ("grpc.max_receive_message_length", 1024 * 1024 * 1024)  # 1GB
         ]
     return big_msg_options

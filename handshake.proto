@@ -8,15 +8,40 @@ service HandShake {
   rpc GetState(EmptyRequest) returns (StateMessage) {}
   rpc ProcessArrowStream(ArrowTableRequest) returns (ArrowTableResponse) {}
   rpc ProcessData(Table) returns (StringResponse) {}
-  rpc GetHistograms(GetHistogramsRequest) returns (MultipleHistograms) {}
   rpc SendTable (StackedTable) returns (ArrayResponse) {}
-  rpc AggregateLocal (AggregateLocalRequest) returns (AggregateLocalResponse) {}
-  rpc AggregateGlobal (AggregateGlobalRequest) returns (AggregateGlobalResponse) {}
+  rpc AggregateLocal (EmptyRequest) returns (AggregateLocalResponse) {}
+  rpc AggregateGlobal (EmptyRequest) returns (AggregateGlobalResponse) {}
   rpc GetResults (GetResultsRequest) returns (StackedTable) {}
   rpc Shutdown( ShutdownRequest) returns (ShutdownResponse) {}
   rpc Hello (HelloRequest) returns (HelloResponse) {}  
+  rpc SetUpLocalAggregation(SetUpLocalAggregationRequest) returns (EmptyResponse) {}
+  rpc SetUpGlobalAggregation(SetUpGlobalAggregationRequest) returns (EmptyResponse) {}
   // rpc SendDataFrame(DataFrame) returns (StringResponse) {}
+
+  // python to python communication using serialization, do not implement in c++ stub
+  rpc GetHistograms(GetHistogramsRequest) returns (MultipleHistograms) {}
+  rpc GetKeysOnly(EmptyRequest) returns (ResponseObject) {}
+  rpc GetKeysAndData(RequestObject) returns (ResponseObject) {} 
+  rpc MergeKeys(RequestObject) returns (ResponseObject) {}
+  rpc PrepareLocalWork(RequestObject) returns (EmptyResponse) {}
 }
+
+message SetUpGlobalAggregationRequest {
+
+}
+
+message SetUpLocalAggregationRequest {
+  repeated int32 ports = 1;
+}
+
+message RequestObject {
+  bytes data = 1;
+}
+
+message ResponseObject {
+  bytes data = 1;
+}
+
 
 enum DistStatus {
   NOT_STARTED=0;

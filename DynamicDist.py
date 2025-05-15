@@ -10,6 +10,9 @@ class DynamicDist:
                 , bin_size: np.double = np.nan
                 , bin_offset: np.double = np.nan
                 , rebalance_factor: int = 3
+                , data: np.ndarray[np.double] = None
+                , freqs:np.ndarray[np.double] = None
+                , nan_freq: int = None
                 ):
 
       # Size of the buffer used to hold the initial set of samples
@@ -34,6 +37,21 @@ class DynamicDist:
 
       # Keep track of the inverse bin size (for performance reasons)
       self._inv_bin_size: np.double = 1.0/self.bin_size
+
+      # Load the initial data
+      if data is not None:
+         # Check if the bin size has been set
+         if np.isnan(self.bin_size):
+            # Data is not binned. Just add it to the buffer
+            self.add_many(data)
+         else:
+            # Check if the bin_offset is nan
+            if np.isnan(self.bin_offset):
+               # Set the bin offset
+               self.bin_offset = np.nanmin(data)
+            # Load the binned data into the self.bins dictionary
+            self.merge(data = data, freqs = freqs, nan_freq = nan_freq)
+
 
    def compute_hist(self, data, freqs = None, compute_bins = True):
 
@@ -134,7 +152,6 @@ class DynamicDist:
    def add(self, x: np.double):      
       # Check if we are past the initialization stage 
       #   self.bin_size == self.bin_size is equivalent to ! np.isnan(self.bin_size), but faster
-      # if self.n >= self.buffer_size:
       if self.bin_size == self.bin_size:
          # Compute the index of the bin where to insert the data
          key = int((x-self.bin_offset) * self._inv_bin_size)
@@ -160,33 +177,57 @@ class DynamicDist:
 
 
    def get_merge_data(self, centered = True):
-      # Extract the frequency of NaN entries (if any)
-      nan_freq = self.bins.pop(np.nan, None)
-      # Create Numpy arrays from the keys and values of the dictionary
-      hist = np.fromiter(self.bins.values(), dtype = np.uint64, count = len(self.bins))
-      bins = self.bin_offset + np.fromiter(self.bins.keys(), dtype = int, count = len(self.bins)) * self.bin_size + 0.5*self.bin_size*centered
+      # Check if we are past the initialization stage 
+      #   self.bin_size == self.bin_size is equivalent to ! np.isnan(self.bin_size), but faster
+      if self.bin_size == self.bin_size:
+         # Extract the frequency of NaN entries (if any)
+         nan_freq = self.bins.pop(np.nan, None)
+         # Create Numpy arrays from the keys and values of the dictionary
+         hist = np.fromiter(self.bins.values(), dtype = np.uint64, count = len(self.bins))
+         bins = self.bin_offset + np.fromiter(self.bins.keys(), dtype = int, count = len(self.bins)) * self.bin_size + 0.5*self.bin_size*centered
+      else:
+         # Get the raw data from the buffer and return it as a numpy array
+         bins = np.array(self._buffer[0:self.n])
+         hist = None
+         nan_freq = None
 
       # Return the result
       return bins, hist, nan_freq
 
    def merge(self, data, freqs = None, nan_freq = None):
-      # Group the bins
-      group_bins, group_freqs = self.compute_hist(data = data, freqs = freqs)
+      # Check if we are past the initialization stage
+      #   self.bin_size == self.bin_size is equivalent to ! np.isnan(self.bin_size), but faster
+      if self.bin_size == self.bin_size:
+         # Group the bins
+         group_bins, group_freqs = self.compute_hist(data = data, freqs = freqs)
 
-      # Merge the grouped bins and frequencies inside the bins dictionary
-      for key, val in zip(group_bins, group_freqs):
-         self.bins[key] = self.bins.get(key, 0) + val
+         # Merge the grouped bins and frequencies inside the bins dictionary
+         for key, val in zip(group_bins, group_freqs):
+            self.bins[key] = self.bins.get(key, 0) + val
 
-      # Keep track of NaN values (if any)
-      if nan_freq:
-         self.bins[np.nan] = self.bins.get(np.nan, 0) + nan_freq
+         # Update the number of samples processed
+         self.n += np.sum(group_freqs)
 
+         # Keep track of NaN values (if any)
+         if nan_freq:
+            self.bins[np.nan] = self.bins.get(np.nan, 0) + nan_freq
+            self.n += nan_freq
+      else:
+         # This is an edge case. You should not try to merge binned data if we are in the initialization stage
+         if freqs is not None and np.max(freqs) > 1:
+            # Print a warning: Merging binned data while in the initialization stage
+            Warning("Merging binned data while in the initialization stage. This might affect accuracy!")
+            # Create the bins from the buffer
+            self.load_bins()
+            # Now merge the data
+            self.merge(data = data, freqs = freqs, nan_freq = nan_freq)
+         else:
+            self.add_many(data)
 
    def add_many(self, data: np.ndarray):
       n_items = len(data)
       if self.n >= self.buffer_size:
          self.merge(data)
-         self.n += n_items
       else:
          # Determine where to insert the data array inside the buffer
          cutoff_idx = min(self.n + n_items, self.buffer_size)
@@ -202,7 +243,6 @@ class DynamicDist:
          # Check if there are additional items to process
          if n_insert < n_items:
             self.merge(data[n_insert:])
-            self.n += n_items - n_insert
 
       if len(self.bins) > self.rebalance_factor*self.n_bins:
          # Reallocate the bins
@@ -235,3 +275,44 @@ class DynamicDist:
             hist = np.append(hist, nan_freq)
 
       return bins, hist
+
+   @classmethod
+   def merge_many(cls, objects: list['DynamicDist'] = None):
+
+      # Create a new instance of the class
+      result = cls()
+
+      # Make sure we have a list of objects
+      if isinstance(objects, cls):
+         objects = [objects]
+
+      if objects:
+         if len(objects) == 1:
+            # Just return the first object
+            return objects[0]
+         else:
+            # Get a list of all the bin_sizes
+            bin_sizes = [obj.bin_size for obj in objects]
+            # Get the sorted indices of bin_sizes
+            sorted_idx = np.argsort(bin_sizes)
+            # Get the first object
+            result = objects[sorted_idx[0]]
+            for idx in sorted_idx[1:]:
+               # Get the current object
+               obj = objects[idx]
+               if np.isnan(result.bin_size) and np.isnan(obj.bin_size):
+                  # Both objects are not binned. Get the data from the first object
+                  data, freqs, nan_freq = obj.get_merge_data()
+                  # Add the data to the result object
+                  result.add_many(data)
+               elif np.isnan(obj.bin_size) or result.bin_size >= obj.bin_size:
+                  # Merge the current object into the result object
+                  result.merge(*obj.get_merge_data())
+               else:
+                  # Merge the result into the current object
+                  obj.merge(*result.get_merge_data())
+                  # Set the result to the current object
+                  result = obj
+
+      # Return the merged object
+      return result

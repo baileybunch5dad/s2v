@@ -315,7 +315,8 @@ public:
         return response.status();
     }
 
-    handshake::DistStatus get_state() {
+    handshake::DistStatus get_state()
+    {
         handshake::EmptyRequest request;
         handshake::StateMessage response;
         grpc::ClientContext context;
@@ -325,7 +326,8 @@ public:
         return state;
     }
 
-    void set_state(handshake::DistStatus newstate) {
+    void set_state(handshake::DistStatus newstate)
+    {
         handshake::StateMessage request;
         handshake::EmptyResponse response;
         request.set_workerstatus(newstate);
@@ -347,14 +349,36 @@ public:
         return response.reply();
     }
 
-    int AggregateLocal(const std::vector<int> &ports)
+    void SetUpGlobalAggregationRequest()
     {
-        handshake::AggregateLocalRequest request;
+        handshake::SetUpGlobalAggregationRequest request;
+        // Call the Aggregate RPC
+        handshake::EmptyResponse response;
+        grpc::ClientContext context;
+        grpc::Status status = stub_->SetUpGlobalAggregation(&context, request, &response);
+        checkGrpcStatus(status);
+        // return response.return_code();
+    }
+
+    void SetUpLocalAggregation(const std::vector<int> ports)
+    {
+        handshake::SetUpLocalAggregationRequest request;
         for (auto p : ports)
         {
             request.add_ports(p);
         }
 
+        // Call the Aggregate RPC
+        handshake::EmptyResponse response;
+        grpc::ClientContext context;
+        grpc::Status status = stub_->SetUpLocalAggregation(&context, request, &response);
+        checkGrpcStatus(status);
+        // return response.return_code();
+    }
+
+    int AggregateLocal(const std::vector<int> &ports)
+    {
+        handshake::EmptyRequest request;
         // Call the Aggregate RPC
         handshake::AggregateLocalResponse response;
         grpc::ClientContext context;
@@ -363,14 +387,9 @@ public:
         return response.return_code();
     }
 
-    int AggregateGlobal(const std::vector<std::string> &servers)
+    int AggregateGlobal()
     {
-        handshake::AggregateGlobalRequest request;
-        for (std::string s : servers)
-        {
-            request.add_servers(s);
-        }
-
+        handshake::EmptyRequest request;
         // Call the Aggregate RPC
         handshake::AggregateGlobalResponse response;
         grpc::ClientContext context;
@@ -589,8 +608,6 @@ std::vector<int> ports;
 std::mutex vector_mutex;
 // std::atomic<int> row_counter{0};
 
-
-
 void startPython(int argc, char **argv)
 {
     std::unique_lock<std::mutex> lock(vector_mutex);
@@ -785,9 +802,11 @@ std::shared_ptr<HandShakeClient> createInSecureClient(std::string addr)
 #include <unistd.h>
 #include <netdb.h>
 
-std::string getfqdn() {
+std::string getfqdn()
+{
     char hostname[256];
-    if (gethostname(hostname, sizeof(hostname)) != 0) {
+    if (gethostname(hostname, sizeof(hostname)) != 0)
+    {
         std::cerr << "Failed to get hostname" << std::endl;
         std::abort();
     }
@@ -796,13 +815,15 @@ std::string getfqdn() {
     hints.ai_family = AF_INET; // Can also use AF_INET6 for IPv6
     hints.ai_socktype = SOCK_STREAM;
 
-    if (getaddrinfo(hostname, nullptr, &hints, &res) != 0) {
+    if (getaddrinfo(hostname, nullptr, &hints, &res) != 0)
+    {
         std::cerr << "Failed to resolve hostname" << std::endl;
         std::abort();
     }
 
     char fqdn[256];
-    if (getnameinfo(res->ai_addr, res->ai_addrlen, fqdn, sizeof(fqdn), nullptr, 0, NI_NAMEREQD) != 0) {
+    if (getnameinfo(res->ai_addr, res->ai_addrlen, fqdn, sizeof(fqdn), nullptr, 0, NI_NAMEREQD) != 0)
+    {
         std::cerr << "Failed to get FQDN" << std::endl;
         freeaddrinfo(res);
         std::abort();
@@ -817,6 +838,15 @@ std::string getfqdn() {
     return hoststr;
 }
 
+void runLocalAgg(std::shared_ptr<HandShakeClient> client)
+{
+    client->AggregateLocal(ports);
+}
+
+void runGlobalAgg(std::shared_ptr<HandShakeClient> client)
+{
+    client->AggregateGlobal();
+}
 
 bool tls = false;
 
@@ -874,7 +904,8 @@ int main(int argc, char **argv)
         {
             shutdown = false;
         }
-        if(starts_with(s, "--controller")) {
+        if (starts_with(s, "--controller"))
+        {
             controller = true;
         }
     }
@@ -997,22 +1028,47 @@ int main(int argc, char **argv)
         if (thread.joinable())
             thread.join();
     }
-    std::cout << "Local aggregation within threads commencing" << std::endl;
-    clients[0]->AggregateLocal(ports);
-    std::cout << "Aggregation finished" << std::endl;
+    threads.clear();
+    std::cout << "Setting up local aggregation" << std::endl;
+    clients[0]->SetUpLocalAggregation(ports);
+    for (auto c : clients)
+    {
+        threads.emplace_back(runLocalAgg, c);
+    }
+    for (auto &th : threads)
+    {
+        th.join();
+    }
+    threads.clear();
+    std::cout << "Local Aggregation finished" << std::endl;
 
-    for(auto cl : clients) {
+    for (auto cl : clients)
+    {
         cl->set_state(handshake::DistStatus::WAITING_GLOBAL_SIGNAL);
     }
 
     // clients[0]->SendDataFrame();
 
-    if(controller) {
+    if (controller)
+    {
         std::cout << "Controller: Global aggregation across servers commencing" << std::endl;
-        clients[0]->AggregateGlobal(server_addresses);
-    } else {
+        clients[0]->SetUpGlobalAggregationRequest();
+        for (auto c : clients)
+        {
+            threads.emplace_back(runGlobalAgg, c);
+        }
+        for (auto &th : threads)
+        {
+            th.join();
+        }
+        threads.clear();
+        std::cout << "Global Aggregation finished" << std::endl;
+    }
+    else
+    {
         std::cout << "Not controller: Worker waitinbg for external controller to aggregate globally" << std::endl;
-        while(clients[0]->get_state() != handshake::DistStatus::COMPLETED) {
+        while (clients[0]->get_state() != handshake::DistStatus::COMPLETED)
+        {
             std::this_thread::sleep_for(std::chrono::milliseconds(1000)); // let other thread acquire the lock
         }
         std::cout << "Worker completed" << std::endl;
