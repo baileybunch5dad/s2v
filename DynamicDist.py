@@ -314,5 +314,9 @@ class DynamicDist:
                   # Set the result to the current object
                   result = obj
 
+      # if still in sample space prepare bins for tail_risk
+      if np.isnan(result.bin_size):
+         result.load_bins()
+         
       # Return the merged object
       return result

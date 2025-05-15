@@ -240,7 +240,7 @@ class HandShakeServer(handshake_pb2_grpc.HandShakeServicer):
         merge_req = self.extractRequest(request)
         which_keys = merge_req['keys']
         channels = merge_req['channels']
-        print(f"{channels=}")
+        # print(f"{channels=}")
         stubs = [self.getStub(channel) for channel in channels]
         key_list_of_dds = {}
         for stub in stubs:
@@ -282,7 +282,7 @@ class HandShakeServer(handshake_pb2_grpc.HandShakeServicer):
         
         df = pd.DataFrame(dc)
         if not self.printed:
-            print(f"First frame recieved on {os.getpid()=} received\n{df}")
+            print(f"First frame received on {os.getpid()=} \n{df}")
             self.printd = True
         grps = df.groupby(by=['scenario'])
         for grpid, grp in grps:
@@ -295,7 +295,7 @@ class HandShakeServer(handshake_pb2_grpc.HandShakeServicer):
             else:
                 dd = self.hists[key]
             histdata = grp['interest'].to_numpy()
-            print(f"On {os.getpid()=} adding {histdata[:3]}... to hist for {key=} ")
+            # print(f"On {os.getpid()=} adding {histdata[:3]}... to hist for {key=} ")
             dd.add_many(histdata)
         return handshake_pb2.ArrayResponse(message="Array received successfully!")
 
@@ -380,7 +380,7 @@ class HandShakeServer(handshake_pb2_grpc.HandShakeServicer):
                     print(f"DynamicDist pre merge < 5 bins!!! n={localdd.n}")
                 localdd.load_bins()
                 self.error_count += 1
-            localdd.merge(remote_data, remote_freqs)
+            # localdd.merge(remote_data, remote_freqs)
             if len(localdd.bins) < 5:
                 if self.error_count < 5:
                     print("DynamicDist After merge < 5 bins!!!")
@@ -417,7 +417,7 @@ class HandShakeServer(handshake_pb2_grpc.HandShakeServicer):
             chopped_keys = np.array_split(unique_keys, numWorkers)
             for i in range(len(chopped_keys)):
                 parm = {'keys': chopped_keys[i], 'channels':  channels}
-                print(parm)
+                # print(parm)
                 req = self.buildRequest(parm)
                 stub = stubs[i]
                 stub.PrepareLocalWork(req)
@@ -514,16 +514,7 @@ class HandShakeServer(handshake_pb2_grpc.HandShakeServicer):
         print(f"Computing Value and Risk and Expected Shortfall for {len(self.hists.keys())} scenarios")
         tuples = []
         for key,dd in self.hists.items():
-            if len(dd.bins.keys()) == 0: # chris, returning empty lists
-                if self.error_count < 5:
-                    print(f"DynamicDist Warning: Called DynamicDist.get_merge_data() before sample filled n={dd.n}")
-                self.error_count += 1
-                dd.load_bins()
             data, freqs, nan_freq = dd.get_merge_data()
-            if len(data) < 5 or len(freqs) < 5:
-                if self.error_count < 5:
-                    print(f"DynamicDist Warning: < 5 bins !! {key=}")
-                self.error_count += 1
             data = np.array(data, dtype=np.float64)
             freqs = np.array(freqs, dtype=np.int32)
             dist = "GPD"
@@ -532,7 +523,6 @@ class HandShakeServer(handshake_pb2_grpc.HandShakeServicer):
             # df = 3
             # trsh_pct = 0.9
             # def tail_risk(data, freqs, alpha = 0.95, right_side = True, dist = None, df = None, trsh_pct = 0.9):
-            # print(f"{key=} datafirst5={data[:5]} freqsfirst5={freqs[:5]} {alpha=} {right_side=} {dist=}")
             taildf = tail_risk.tail_risk(data, freqs, alpha, right_side, dist)
             expected_shortfall = taildf.at[0.95,'ES']
             value_at_risk = taildf.at[0.95,'VaR']
