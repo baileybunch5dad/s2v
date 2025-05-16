@@ -1075,17 +1075,13 @@ int main(int argc, char **argv)
         {
             if (!printedWaiting)
             {
-                std::cout << "Waiting on signal for global to commence" << std::endl;
+                std::cout << "Waiting on signal for worker to complete local aggregation" << std::endl;
                 printedWaiting = true;
             }
             std::this_thread::sleep_for(std::chrono::milliseconds(1000)); // let other thread acquire the lock
         }
     }
-    if (printedWaiting)
-    {
-        std::cout << "Received signal, firing threads" << std::endl;
-        printedWaiting = false;
-    }
+    std::cout << "Global aggregation starting" << std::endl;
 
     for (auto c : clients)
     {
@@ -1101,6 +1097,7 @@ int main(int argc, char **argv)
         clients[0]->CompleteGlobalAggregation();
     }
 
+    printedWaiting = false;
     for (auto c : clients)
     {
         while (c->get_state() < handshake::DistStatus::COMPLETED)
