@@ -34,24 +34,32 @@ import collections
 
 # print(f"Using ports {ports}")
 
+class Worker:
+    def __init__(self, stub, channel, mychannel):
+        self.stub = stub
+        self.channel = channel
+        host, port = channel.rsplit(":", 1)
+        self.host = host
+        self.port = port
+        self.islocal = channel == mychannel
+        
 class HandShakeServer(handshake_pb2_grpc.HandShakeServicer):
 
     # def __init__(self, server):
     #     self.server = server
-        # self.logger = logging.getLogger('HandShakeService')
+    #     self.logger = logging.getLogger('HandShakeService')
 
-    def addStopEvent(self, stop_event):
+    # def addStopEvent(self, stop_event):
+    #     self._stop_event = stop_event
+    
+    def __init__(self, channelTarget, stop_event, server, client_credentials):
         self._stop_event = stop_event
-        
-    def setOptions(self, port, id, server, credentials):
-        self.port = port
-        self.id = id
-        self.server = server
         self.hists = {}
         self.printed = False
-        self.credentials = credentials
+        self.credentials = client_credentials
         self._status = handshake_pb2.NOT_STARTED
         self.error_count = 0
+        self.mychannel = channelTarget
 
     def ProcessArrowStream(self, request, context):
         """Receives a serialized Arrow table, deserializes it, and processes it."""
@@ -102,11 +110,7 @@ class HandShakeServer(handshake_pb2_grpc.HandShakeServicer):
                 message=f"Successfully received table with {arrow_table.num_rows} rows and {arrow_table.num_columns} columns"
             )
         except Exception as e:
-            stack_trace = traceback.format_exc()
-            # Return error response
-            error_message = f"{str(e)}\n{stack_trace}"
-            context.set_details(error_message)
-            context.set_code(grpc.StatusCode.INTERNAL)
+            self.process_exception(e, context)
             return handshake_pb2.ArrowTableResponse(
                 success=False,
                 message=f"Error processing Arrow table: {str(e)} {error_message}"
@@ -209,14 +213,18 @@ class HandShakeServer(handshake_pb2_grpc.HandShakeServicer):
         pdf = pd.DataFrame(data)
         return pdf
 
-    def GetKeysAndData(self, request, context):
-        which_keys = self.extractRequest(request)
+    def extractSpecificKeys(self, which_keys):
         key_dd = {}
         for key in which_keys:
             if key in self.hists.keys():
                 key_dd[key] = self.hists[key]
                 del self.hists[key] # if giving the dd away for merger, remove local copy
-        return self.buildResponse(key_dd)
+        return key_dd
+        
+    def GetKeysAndData(self, request, context):
+        which_keys = self.extractRequest(request)
+        key_dd_ret = self.extractSpecificKeys(which_keys)
+        return self.buildResponse(key_dd_ret)
   
     def extractRequest(self, request):
         return pickle.loads(request.data)
@@ -235,25 +243,25 @@ class HandShakeServer(handshake_pb2_grpc.HandShakeServicer):
     def GetKeysOnly(self, request, context):
         return self.buildResponse(list(self.hists.keys()))
 
-    def MergeKeys(self, request, context):
-        print("Merge Keys!")
-        merge_req = self.extractRequest(request)
-        which_keys = merge_req['keys']
-        channels = merge_req['channels']
-        # print(f"{channels=}")
-        stubs = [self.getStub(channel) for channel in channels]
-        key_list_of_dds = {}
-        for stub in stubs:
-            key_dd_dict = self.extractResponse(stub.GetKeysAndData(self.buildRequest(which_keys)))
-            for key,dd in key_dd_dict.items():
-                if key not in key_list_of_dds.keys():
-                    key_list_of_dds[key] = []
-                key_list_of_dds[key].append(dd)
-        self.hists = {}
-        for key,ddlist in key_list_of_dds.items():
-            self.hists[key] = DynamicDist.merge_many(ddlist)
-        retobj = {'status': 0, 'keys': list(self.hists.keys())}            
-        return self.buildResponse(retobj)
+    # def MergeKeys(self, request, context):
+    #     print("Merge Keys!")
+    #     merge_req = self.extractRequest(request)
+    #     which_keys = merge_req['keys']
+    #     channels = merge_req['channels']
+    #     # print(f"{channels=}")
+    #     stubs = [self.getStub(channel) for channel in channels]
+    #     key_list_of_dds = {}
+    #     for stub in stubs:
+    #         key_dd_dict = self.extractResponse(stub.GetKeysAndData(self.buildRequest(which_keys)))
+    #         for key,dd in key_dd_dict.items():
+    #             if key not in key_list_of_dds.keys():
+    #                 key_list_of_dds[key] = []
+    #             key_list_of_dds[key].append(dd)
+    #     self.hists = {}
+    #     for key,ddlist in key_list_of_dds.items():
+    #         self.hists[key] = DynamicDist.merge_many(ddlist)
+    #     retobj = {'status': 0, 'keys': list(self.hists.keys())}            
+    #     return self.buildResponse(retobj)
         
     def SendTable(self, request, context):
         dname: str = request.doublename
@@ -282,7 +290,7 @@ class HandShakeServer(handshake_pb2_grpc.HandShakeServicer):
         
         df = pd.DataFrame(dc)
         if not self.printed:
-            print(f"First frame received on {os.getpid()=} \n{df}")
+            print(f"First frame received on {self.mychannel} \n{df}")
             self.printd = True
         grps = df.groupby(by=['scenario'])
         for grpid, grp in grps:
@@ -396,84 +404,154 @@ class HandShakeServer(handshake_pb2_grpc.HandShakeServicer):
         return stub
     
     def PrepareLocalWork(self, request, context):
-        plw_req = self.extractRequest(request)
-        self.local_work = {}
-        self.local_work['keys'] = plw_req['keys']
-        self.local_work['channels'] = plw_req['channels']
+        self.local_work = {'keys': self.extractRequest(request)['keys']}
         return handshake_pb2.EmptyResponse()
 
-    def assignWork(self, channels):
-        try:
-            numWorkers = len(channels)
-            stubs = [self.getStub(channel) for channel in channels]
-            allKeysEveryWhere = []
-            for stub in stubs:
+    def assignWork(self):
+        numWorkers = len(self.workers)
+        allKeysEveryWhere = []
+        for w in self.workers:
+            if w.islocal:
+                respkeys = list(self.hists.keys())
+            else:
                 req = handshake_pb2.EmptyRequest()
-                resp = stub.GetKeysOnly(req)
+                resp = w.stub.GetKeysOnly(req)
                 respkeys = self.extractResponse(resp)
-                allKeysEveryWhere.extend(respkeys)
-            unique_keys = list(collections.OrderedDict.fromkeys(allKeysEveryWhere))
-            unique_keys = np.array(unique_keys)
-            chopped_keys = np.array_split(unique_keys, numWorkers)
-            for i in range(len(chopped_keys)):
-                parm = {'keys': chopped_keys[i], 'channels':  channels}
-                # print(parm)
+            allKeysEveryWhere.extend(respkeys)
+        unique_keys = list(collections.OrderedDict.fromkeys(allKeysEveryWhere))
+        unique_keys = np.array(unique_keys)
+        chopped_keys = np.array_split(unique_keys, numWorkers)
+        num_chops = len(chopped_keys)
+        for idx,w in enumerate(self.workers):
+            if idx < num_chops:
+                parm = {'keys': chopped_keys[idx]}
+            else:
+                parm = {'keys': []}
+            if w.islocal:
+                self.local_work = parm
+            else:
                 req = self.buildRequest(parm)
-                stub = stubs[i]
-                stub.PrepareLocalWork(req)
-            return handshake_pb2.EmptyResponse()
-        except Exception as e:
-            stack_trace = traceback.format_exc()
-            print(stack_trace)
-            error_message = f"{str(e)}\n{stack_trace}"
-            context.set_details(error_message)
-            context.set_code(grpc.StatusCode.INTERNAL)
-            return handshake_pb2.EmptyResponse()  
+                w.stub.PrepareLocalWork(req)
 
+    def process_exception(self, e, context):
+        stack_trace = traceback.format_exc()
+        print(stack_trace)
+        error_message = f"{str(e)}\n{stack_trace}"
+        context.set_details(error_message)
+        context.set_code(grpc.StatusCode.INTERNAL)
+
+    def assignWorkers(self, channels):
+        self.workers = [Worker(self.getStub(channel), channel, self.mychannel) for channel in channels]
+        print(f"Workers for {self.mychannel}")
+        for w in self.workers:
+            if w.islocal:
+                print(f"   {w.channel} isLocal={w.islocal}")
+            else: 
+                # resp = w.stub.Hello(handshake_pb2.HelloRequest(name=self.mychannel))
+                # print(f"   {resp.reply}")
+                print(f"   {w.channel}")
+                
+    def BroadcastChannels(self, request, context):
+        try:
+            channels = self.extractRequest(request)
+            self.assignWorkers(channels)
+            return handshake_pb2.EmptyResponse()  
+        except Exception as e:
+            self.process_exception(e, context)
+            return handshake_pb2.EmptyResponse()  
+            
         
     def SetUpGlobalAggregation(self, request, context):
-        return self.assignWork(getAllHosts())
+        try:
+            channels = getAllHosts()
+            self.assignWorkers(channels)
+            for w in self.workers:
+                if not w.islocal:
+                    printed = False
+                    while(w.stub.GetState(handshake_pb2.EmptyRequest()).workerstatus < handshake_pb2.FINISHED_LOCAL_AGGREGATIONS_AWAITING_SIGNAL):
+                        if not printed:
+                            print(f"{self.mychannel} waiting on {w.channel} to complete local aggregations")
+                            printed = True
+                        time.sleep(1)
+            # at this point all local aggregations have completed, set status to building global
+            for w in self.workers:
+                if w.islocal:
+                    self._status =  handshake_pb2.BUILDING_GLOBAL_AGGREGATIONS
+                else:
+                    w.stub.SetState(handshake_pb2.StateMessage(workerstatus=handshake_pb2.BUILDING_GLOBAL_AGGREGATIONS))
+            for w in self.workers:
+                if not w.islocal:
+                    w.stub.BroadcastChannels(self.buildRequest(channels))
+            self.assignWork()
+            return handshake_pb2.EmptyResponse()  
+        except Exception as e:
+            self.process_exception(e, context)
+            return handshake_pb2.EmptyResponse()  
     
     def SetUpLocalAggregation(self, request, context):
-        ports: np.array = np.array(request.ports, dtype=int)
-        channels = ['localhost:' + str(p) for p in ports]
-        return self.assignWork(channels)
+        try:
+            ports: np.array = np.array(request.ports, dtype=int)
+            channels = [gethostname() + ':' + str(p) for p in ports]
+            self.assignWorkers(channels)
+            for w in self.workers:
+                if not w.islocal:
+                    w.stub.BroadcastChannels(self.buildRequest(channels))
+            self.assignWork()
+            return handshake_pb2.EmptyResponse()  
+        except Exception as e:
+            self.process_exception(e, context)
+            return handshake_pb2.EmptyResponse()  
 
     def do_merger_work(self):
-        try:
-            which_keys = self.local_work['keys']
-            channels = self.local_work['channels']
-            stubs = [self.getStub(channel) for channel in channels]
-            key_list_of_dds = {}
-            for stub in stubs:
-                key_dd_dict = self.extractResponse(stub.GetKeysAndData(self.buildRequest(which_keys)))
-                for key,dd in key_dd_dict.items():
-                    if key not in key_list_of_dds.keys():
-                        key_list_of_dds[key] = []
-                    key_list_of_dds[key].append(dd)
-            self.hists = {}
-            for key,ddlist in key_list_of_dds.items():
-                self.hists[key] = DynamicDist.merge_many(ddlist)
-            return handshake_pb2.AggregateLocalResponse(return_code=0)
-        except Exception as e:
-            stack_trace = traceback.format_exc()
-            print(stack_trace)
-            error_message = f"{str(e)}\n{stack_trace}"
-            context.set_details(error_message)
-            context.set_code(grpc.StatusCode.INTERNAL)
-            return handshake_pb2.AggregateLocalResponse(return_code=1)
-                                      
+        which_keys = self.local_work['keys']
+        key_list_of_dds = {}
+        for w in self.workers:
+            if w.islocal:
+                key_dd_dict = self.extractSpecificKeys(which_keys)
+            else:
+                req = self.buildRequest(which_keys)
+                resp = w.stub.GetKeysAndData(req)
+                key_dd_dict = self.extractResponse(resp)
+            for key,dd in key_dd_dict.items():
+                if key not in key_list_of_dds.keys():
+                    key_list_of_dds[key] = []
+                key_list_of_dds[key].append(dd)
+        self.hists = {}
+        for key,ddlist in key_list_of_dds.items():
+            self.hists[key] = DynamicDist.merge_many(ddlist)
+
+    def CompleteLocalAggregation(self, request, context):
+        for w in self.workers:
+            if not w.islocal:
+                w.stub.SetState(handshake_pb2.StateMessage(workerstatus=handshake_pb2.FINISHED_LOCAL_AGGREGATIONS_AWAITING_SIGNAL))
+        self._status = handshake_pb2.FINISHED_LOCAL_AGGREGATIONS_AWAITING_SIGNAL
+        return handshake_pb2.EmptyResponse()
+
+    def CompleteGlobalAggregation(self, request, context):
+        for w in self.workers:
+            if not w.islocal:
+                printed = False
+                while(w.stub.GetState(handshake_pb2.EmptyRequest()).workerstatus < handshake_pb2.FINISHED_GLOBAL_AGGREGATIONS_AWAITING_SIGNAL):
+                    if not printed:
+                        print(f"{self.mychannel} waiting on {w.channel} to complete global aggregations")
+                        printed = True
+                    time.sleep(1)
+        for w in self.workers:
+            if not w.islocal:
+                w.stub.SetState(handshake_pb2.StateMessage(workerstatus=handshake_pb2.COMPLETED))
+        self._status = handshake_pb2.COMPLETED
+        return handshake_pb2.EmptyResponse()
+            
+                                              
     def AggregateLocal(self, request, context):
-        print(f"On {os.getpid()=} AggregateLocal")
+        print(f"On {self.mychannel} AggregateLocal starting")
         try:
             self.do_merger_work()
+            print(f"On {self.mychannel} AggregateLocal finish")
+            self._status = handshake_pb2.FINISHED_LOCAL_AGGREGATIONS_AWAITING_SIGNAL
             return handshake_pb2.AggregateLocalResponse(return_code=0)
         except Exception as e:
-            stack_trace = traceback.format_exc()
-            print(stack_trace)
-            error_message = f"{str(e)}\n{stack_trace}"
-            context.set_details(error_message)
-            context.set_code(grpc.StatusCode.INTERNAL)
+            self.process_exception(e, context)
             return handshake_pb2.AggregateLocalResponse(return_code=1)
                 
                                     
@@ -527,7 +605,7 @@ class HandShakeServer(handshake_pb2_grpc.HandShakeServicer):
             expected_shortfall = taildf.at[0.95,'ES']
             value_at_risk = taildf.at[0.95,'VaR']
             tuples.append((key, expected_shortfall, value_at_risk))
-        print(f"PID={os.getpid()} inserting into database {len(tuples)} tuples")
+        print(f"{self.mychannel} inserting into database {len(tuples)} tuples")
         csv_buffer = io.StringIO()
         for row in tuples:
             csv_buffer.write(",".join(map(str, row)) + "\n")
@@ -545,23 +623,17 @@ class HandShakeServer(handshake_pb2_grpc.HandShakeServicer):
         
     def AggregateGlobal(self, request, context):
         thishost = gethostname()
-        print(f"On {os.getpid()=} {thishost=} AggregateGlobal commencing")
+        print(f"On {self.mychannel} AggregateGlobal commencing")
         try:
             self.do_merger_work()
-            print(f"On {os.getpid()=} {thishost=} Computing tail risk")
+            print(f"On {self.mychannel} Computing tail risk")
             self.computeAndPersistTailRisk()
-            self._status = handshake_pb2.COMPLETED
-            print(f"On {os.getpid()=} {thishost=} AggregateGlobal completing")
+            self._status = handshake_pb2.FINISHED_GLOBAL_AGGREGATIONS_AWAITING_SIGNAL
+            print(f"On {self.mychannel} AggregateGlobal completing")
             return handshake_pb2.AggregateGlobalResponse(return_code=0)
         except Exception as e:
-            stack_trace = traceback.format_exc()
-            print(stack_trace)
-            error_message = f"{str(e)}\n{stack_trace}"
-            context.set_details(error_message)
-            context.set_code(grpc.StatusCode.INTERNAL)
-            return handshake_pb2.AggregateLocalResponse(
-                return_code=1
-                )
+            self.process_exception(e, context)
+            return handshake_pb2.AggregateLocalResponse(return_code=1)
 
     
     def SendDataFrame(self, request, context):
@@ -599,9 +671,8 @@ class HandShakeServer(handshake_pb2_grpc.HandShakeServicer):
     
     def Hello(self, request, context):
         instr = str(request.name)
-        print(f"Hello from TestMethod, received {instr}  {os.getpid()=} ")
-        outstr = instr + " and back "
-        return handshake_pb2.HelloResponse(reply=outstr)
+        # print(f"Hello from TestMethod, received {instr}  {os.getpid()=} ")
+        return handshake_pb2.HelloResponse(reply=self.mychannel)
 
     def GetResults(self, request, context):
         np.random.seed(0)
@@ -613,14 +684,14 @@ class HandShakeServer(handshake_pb2_grpc.HandShakeServicer):
         return response
     
     def Shutdown(self, request, context):
-        print(f"Shutdown RPC called. Post message to terminate server.  {self.port=}")
+        print(f"Shutdown RPC called. Post message to terminate server.  {self.mychannel}")
         self._stop_event.set()
         # return my_service_pb2.ShutdownResponse()
         # shutdown_thread = threading.Thread(target=self._shutdown, args=())
         # shutdown_thread.daemon = True
         # shutdown_thread.start()
         # print(f"Daemon thread started, returning.  {self.port=}")
-        return handshake_pb2.ShutdownResponse(status=f"Server shutting down {self.port=}")
+        return handshake_pb2.ShutdownResponse(status=f"Server shutting down {self.mychannel}")
 
     def _shutdown(self):
         time.sleep(1)  # Brief delay to allow response to be sent
@@ -658,26 +729,21 @@ def serve(q, id:int = 10, tls:bool = False):
             certificate = f.read()
 
         server_credentials = grpc.ssl_server_credentials([(private_key, certificate)])
-        
         server = grpc.server(futures.ThreadPoolExecutor(max_workers=5), options=channel_options())
-        hs = HandShakeServer()
-        handshake_pb2_grpc.add_HandShakeServicer_to_server(hs, server)
-
         newport = server.add_secure_port('[::]:0', server_credentials)
         client_credentials = grpc.ssl_channel_credentials(root_certificates=certificate)
-        hs.setOptions(newport, id, server, client_credentials)
-
+        # hs = HandShakeServer(id, server, client_credentials)
+        # handshake_pb2_grpc.add_HandShakeServicer_to_server(hs, server)
     else:
         server = grpc.server(futures.ThreadPoolExecutor(max_workers=5), options=channel_options())
-        hs = HandShakeServer()
-        handshake_pb2_grpc.add_HandShakeServicer_to_server(hs, server)
-
-        # Start the server on port 0 (dynamically assigned)
         newport = server.add_insecure_port('[::]:0')
-        hs.setOptions(newport, id, server, None)
+        client_credentials = None
+
         
     stop_event = threading.Event()
-    hs.addStopEvent(stop_event)
+    hs = HandShakeServer(gethostname() + ':' + str(newport), stop_event, server, client_credentials)
+    handshake_pb2_grpc.add_HandShakeServicer_to_server(hs, server)
+    # hs.addStopEvent(stop_event)
     server.start()
     q.put(newport)
     # print(f"Server started, listening on {newport} from PID={os.getpid()=}")

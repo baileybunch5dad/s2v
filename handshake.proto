@@ -16,7 +16,10 @@ service HandShake {
   rpc Hello (HelloRequest) returns (HelloResponse) {}  
   rpc SetUpLocalAggregation(SetUpLocalAggregationRequest) returns (EmptyResponse) {}
   rpc SetUpGlobalAggregation(SetUpGlobalAggregationRequest) returns (EmptyResponse) {}
+  rpc CompleteLocalAggregation(EmptyRequest) returns (EmptyResponse) {}
+  rpc CompleteGlobalAggregation(EmptyRequest) returns (EmptyResponse) {}
   // rpc SendDataFrame(DataFrame) returns (StringResponse) {}
+
 
   // python to python communication using serialization, do not implement in c++ stub
   rpc GetHistograms(GetHistogramsRequest) returns (MultipleHistograms) {}
@@ -24,6 +27,7 @@ service HandShake {
   rpc GetKeysAndData(RequestObject) returns (ResponseObject) {} 
   rpc MergeKeys(RequestObject) returns (ResponseObject) {}
   rpc PrepareLocalWork(RequestObject) returns (EmptyResponse) {}
+  rpc BroadcastChannels(RequestObject) returns (EmptyResponse) {}
 }
 
 message SetUpGlobalAggregationRequest {
@@ -47,9 +51,10 @@ enum DistStatus {
   NOT_STARTED=0;
   COLLECTING_DATA=1;
   BUILDING_LOCAL_AGGREGATIONS=2;
-  WAITING_GLOBAL_SIGNAL=3;
+  FINISHED_LOCAL_AGGREGATIONS_AWAITING_SIGNAL=3;
   BUILDING_GLOBAL_AGGREGATIONS=4;
-  COMPLETED = 5;
+  FINISHED_GLOBAL_AGGREGATIONS_AWAITING_SIGNAL=5;
+  COMPLETED = 6;
 }
 
 message SingleInt {

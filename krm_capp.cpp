@@ -349,6 +349,22 @@ public:
         return response.reply();
     }
 
+    void CompleteLocalAggregation()
+    {
+        handshake::EmptyRequest request;
+        handshake::EmptyResponse response;
+        grpc::ClientContext context;
+        grpc::Status status = stub_->CompleteLocalAggregation(&context, request, &response);
+        checkGrpcStatus(status);
+    }
+    void CompleteGlobalAggregation()
+    {
+        handshake::EmptyRequest request;
+        handshake::EmptyResponse response;
+        grpc::ClientContext context;
+        grpc::Status status = stub_->CompleteGlobalAggregation(&context, request, &response);
+        checkGrpcStatus(status);
+    }
     void SetUpGlobalAggregationRequest()
     {
         handshake::SetUpGlobalAggregationRequest request;
@@ -1042,37 +1058,62 @@ int main(int argc, char **argv)
     threads.clear();
     std::cout << "Local Aggregation finished" << std::endl;
 
-    for (auto cl : clients)
-    {
-        cl->set_state(handshake::DistStatus::WAITING_GLOBAL_SIGNAL);
-    }
+    clients[0]->CompleteLocalAggregation();
 
     // clients[0]->SendDataFrame();
 
     if (controller)
     {
-        std::cout << "Controller: Global aggregation across servers commencing" << std::endl;
+        std::cout << "Controller: Setting up global aggregation" << std::endl;
         clients[0]->SetUpGlobalAggregationRequest();
-        for (auto c : clients)
-        {
-            threads.emplace_back(runGlobalAgg, c);
-        }
-        for (auto &th : threads)
-        {
-            th.join();
-        }
-        threads.clear();
-        std::cout << "Global Aggregation finished" << std::endl;
     }
-    else
+
+    bool printedWaiting = false;
+    for (auto c : clients)
     {
-        std::cout << "Not controller: Worker waitinbg for external controller to aggregate globally" << std::endl;
-        while (clients[0]->get_state() != handshake::DistStatus::COMPLETED)
+        while (c->get_state() < handshake::DistStatus::BUILDING_GLOBAL_AGGREGATIONS)
         {
+            if (!printedWaiting)
+            {
+                std::cout << "Waiting on signal for global to commence" << std::endl;
+                printedWaiting = true;
+            }
             std::this_thread::sleep_for(std::chrono::milliseconds(1000)); // let other thread acquire the lock
         }
-        std::cout << "Worker completed" << std::endl;
     }
+    if (printedWaiting)
+    {
+        std::cout << "Received signal, firing threads" << std::endl;
+        printedWaiting = false;
+    }
+
+    for (auto c : clients)
+    {
+        threads.emplace_back(runGlobalAgg, c);
+    }
+    for (auto &th : threads)
+    {
+        th.join();
+    }
+    threads.clear();
+    if (controller)
+    {
+        clients[0]->CompleteGlobalAggregation();
+    }
+
+    for (auto c : clients)
+    {
+        while (c->get_state() < handshake::DistStatus::COMPLETED)
+        {
+            if (!printedWaiting)
+            {
+                std::cout << "Waiting on signal for global to complete" << std::endl;
+                printedWaiting = true;
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(1000)); // let other thread acquire the lock
+        }
+    }
+    std::cout << "Global Aggregation finished" << std::endl;
 
     if (shutdown)
     {
