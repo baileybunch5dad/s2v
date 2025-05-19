@@ -50,6 +50,7 @@ class HandShakeClient
 {
 private:
     std::unique_ptr<handshake::HandShake::Stub> stub_;
+    size_t total_rows;
 
     void checkGrpcStatus(const grpc::Status &status)
     {
@@ -154,12 +155,16 @@ private:
 
 public:
     HandShakeClient(std::shared_ptr<grpc::Channel> channel)
-        : stub_(handshake::HandShake::NewStub(channel)) {}
+        : stub_(handshake::HandShake::NewStub(channel)), total_rows(0) {}
 
     // Send an Arrow table to the server
 
     bool ProcessArrowStream(const std::shared_ptr<arrow::Table> &table)
     {
+
+        size_t buffer_rows = table->num_rows();
+        total_rows += buffer_rows;
+        std::cout << "Streaming " << buffer_rows << " rows, thread total " << total_rows << std::endl;
 
         // Serialize the Arrow table to a buffer
 
@@ -188,6 +193,7 @@ public:
         grpc::ClientContext context;
 
         // Send the RPC
+
 
         grpc::Status status = stub_->ProcessArrowStream(&context, request, &response);
 

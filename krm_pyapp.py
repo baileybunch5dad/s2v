@@ -61,6 +61,17 @@ class HandShakeServer(handshake_pb2_grpc.HandShakeServicer):
         self.error_count = 0
         self.mychannel = channelTarget
 
+    def convertArrowDirectlyToDictionary(self, arrow_table):
+        grouped = arrow_table.group_by("scenario").aggregate([("par_bal", "list")])
+        numpy_arrays = {key.as_py(): np.array(values.as_py()) for key, values in zip(grouped["scenario"], grouped["par_bal_list"])}
+        return numpy_arrays
+      
+    def convertArrowToDataFrameThenDictionary(self, arrow_table):
+        df = arrow_table.to_pandas()
+        grps = df.groupby(by=['scenario'])
+        numpy_arrays = {grpid[0]:grp['par_bal'].to_numpy() for grpid, grp in grps}
+        return numpy_arrays
+        
     def ProcessArrowStream(self, request, context):
         """Receives a serialized Arrow table, deserializes it, and processes it."""
         try:
@@ -73,36 +84,25 @@ class HandShakeServer(handshake_pb2_grpc.HandShakeServicer):
             # pull evreything off the socket
             arrow_table = reader.read_all()
 
-            # in a C call, convert the byte stream to a pandas dataframe
-            df = arrow_table.to_pandas()
+            skipDataFrame = True
+            
+            if skipDataFrame:            
+                pdict = self.convertArrowDirectlyToDictionary(arrow_table)
+            else:
+                pdict = self.convertArrowToDataFrameThenDictionary(arrow_table)
 
             if not self.printed:
-                print(df)
+                print(arrow_table.to_pandas())
                 self.printed = True
 
-            # also in C, gather the data in different groupby to stream them as arrays to the distribution finder 
-            grps = df.groupby(by=['scenario'])
-
-            if grps is None:
-                print(f"ERROR: Received table with {arrow_table.num_rows} but no by group variable ")
-                return handshake_pb2.ArrowTableResponse(
-                    success=False,
-                    message=f"Successfully received table with {arrow_table.num_rows} rows and {arrow_table.num_columns} columns")
-
-            allkeys = []
-            for grpid, grp in grps:
-                # print(f"On {os.getpid()=} adding {grpid=}")
-                # print(grp)
-                key = str(grpid[0])
+            for key,val in pdict.items():
+                key = str(key)
                 if key not in self.hists.keys():
                     dd = DynamicDist()
                     self.hists[key] = dd
                 else:
                     dd = self.hists[key]
-                histdata = grp['par_bal'].to_numpy()
-                # print(f"On {os.getpid()=} adding {histdata[:3]}... to hist for {key=} ")
-                allkeys.append(key)
-                dd.add_many(histdata)    
+                dd.add_many(val)
 
            
             return handshake_pb2.ArrowTableResponse(
@@ -446,6 +446,7 @@ class HandShakeServer(handshake_pb2_grpc.HandShakeServicer):
         mergedds = {k:DynamicDist.merge_many(ddlist) for k,ddlist in gatherdds.items()}
         unique_keys = np.array(list(mergedds.keys()))
         chopped_keys = np.array_split(unique_keys, numWorkers)
+        num_cops = len(chopped_keys)
         for idx,assignedworker in enumerate(self.workers):
             if idx < num_chops:
                 which_keys = chopped_keys[idx]
