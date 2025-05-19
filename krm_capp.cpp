@@ -371,6 +371,8 @@ public:
         // Call the Aggregate RPC
         handshake::EmptyResponse response;
         grpc::ClientContext context;
+        // std::chrono::system_clock::time_point deadline = std::chrono::system_clock::now() + std::chrono::minutes(5);
+        // context.set_deadline(deadline);
         grpc::Status status = stub_->SetUpGlobalAggregation(&context, request, &response);
         checkGrpcStatus(status);
         // return response.return_code();
@@ -387,6 +389,8 @@ public:
         // Call the Aggregate RPC
         handshake::EmptyResponse response;
         grpc::ClientContext context;
+        // std::chrono::system_clock::time_point deadline = std::chrono::system_clock::now() + std::chrono::minutes(5);
+        // context.set_deadline(deadline);
         grpc::Status status = stub_->SetUpLocalAggregation(&context, request, &response);
         checkGrpcStatus(status);
         // return response.return_code();

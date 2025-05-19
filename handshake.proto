@@ -28,6 +28,8 @@ service HandShake {
   rpc MergeKeys(RequestObject) returns (ResponseObject) {}
   rpc PrepareLocalWork(RequestObject) returns (EmptyResponse) {}
   rpc BroadcastChannels(RequestObject) returns (EmptyResponse) {}
+  rpc GetAllDistributions(EmptyRequest) returns (ResponseObject) {}
+  rpc SetAllDistributions(RequestObject) returns (EmptyResponse) {}
 }
 
 message SetUpGlobalAggregationRequest {

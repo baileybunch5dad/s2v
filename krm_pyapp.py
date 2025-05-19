@@ -214,11 +214,11 @@ class HandShakeServer(handshake_pb2_grpc.HandShakeServicer):
         return pdf
 
     def extractSpecificKeys(self, which_keys):
-        key_dd = {}
-        for key in which_keys:
-            if key in self.hists.keys():
-                key_dd[key] = self.hists[key]
-                del self.hists[key] # if giving the dd away for merger, remove local copy
+        print(f"   extract {len(which_keys)} keys on {self.mychannel}")
+        localkeys = set(list(self.hists.keys()))
+        remotekeys = set(list(which_keys))
+        commonkeys = list(localkeys.intersection(remotekeys))
+        key_dd = {key:self.hists[key] for key in commonkeys}
         return key_dd
         
     def GetKeysAndData(self, request, context):
@@ -226,17 +226,31 @@ class HandShakeServer(handshake_pb2_grpc.HandShakeServicer):
         key_dd_ret = self.extractSpecificKeys(which_keys)
         return self.buildResponse(key_dd_ret)
   
+    def obj2pkl(self, o):
+        t1 = time.perf_counter()
+        b = pickle.dumps(o)
+        t2 = time.perf_counter()
+        print(f"        {self.mychannel} pickle.dumps {len(b):,} bytes took {t2-t1}")
+        return b
+        
+    def pkl2obj(self, b):
+        t1 = time.perf_counter()
+        o = pickle.loads(b)
+        t2 = time.perf_counter()
+        print(f"        {self.mychannel} pickle.loads {len(b):,} bytes took {t2-t1}")
+        return o
+        
     def extractRequest(self, request):
-        return pickle.loads(request.data)
-
+        return self.pkl2obj(request.data)
+    
     def extractResponse(self, response):
-        return pickle.loads(response.data)
-
+        return self.pkl2obj(response.data)
+    
     def buildRequest(self, o):
-        return handshake_pb2.RequestObject(data=pickle.dumps(o))
+        return handshake_pb2.RequestObject(data=self.obj2pkl(o))
             
     def buildResponse(self, o):
-        return handshake_pb2.ResponseObject(data=pickle.dumps(o))
+        return handshake_pb2.ResponseObject(data=self.obj2pkl(o))
 
     # handle Exception calling application: cannot pickle \'dict_keys\' object
     # because dict keys are a view
@@ -307,6 +321,11 @@ class HandShakeServer(handshake_pb2_grpc.HandShakeServicer):
             dd.add_many(histdata)
         return handshake_pb2.ArrayResponse(message="Array received successfully!")
 
+    def GetAllDistributions(self, request, context):
+        return self.buildResponse(self.hists)
+    
+    def SetAllDistributions(self, request, context):
+        self.hists = self.extractRequest(request)
     
     def GetHistograms(self, request, context):
         # allhists = []
@@ -404,10 +423,43 @@ class HandShakeServer(handshake_pb2_grpc.HandShakeServicer):
         return stub
     
     def PrepareLocalWork(self, request, context):
-        self.local_work = {'keys': self.extractRequest(request)['keys']}
+        self.key_list_of_dds = self.extractRequest(request)
         return handshake_pb2.EmptyResponse()
 
-    def assignWork(self):
+    def partitionWork(self):
+        print(f"Partition start")
+        numWorkers = len(self.workers)
+        gatherdds = {}
+        print("Partition: Gathering keys")
+        for w in self.workers:
+            if w.islocal:
+                remotehists = self.hists
+                # respkeys = list(self.hists.keys())
+            else:
+                remotehists = self.extractResponse(w.stub.GetAllDistributions(handshake_pb2.EmptyRequest()))
+                    
+            for k,dd in remotehists.items():
+                if k not in gatherdds.keys():
+                    gatherdds[k] = []
+                gatherdds[k].append(dd)
+        print("Partition: Consolidating")
+        mergedds = {k:DynamicDist.merge(ddlist) for k,ddlist in gatherdds.items()}
+        unique_keys = np.array(list(mergedds.keys()))
+        chopped_keys = np.array_split(unique_keys, numWorkers)
+        for idx,assignedworker in enumerate(self.workers):
+            if idx < num_chops:
+                which_keys = chopped_keys[idx]
+            else:
+                which_keys = []
+            smallhist = {k:mergedds[k] for k in which_keys}
+            print(f"Partition: Assign {len(smallhist)} distributions to {assignedworker.channel}")
+            if assignedworker.islocal:
+                self.hists = smallhist
+            else:
+                assignedworker.stub.SetAllDistributions(self.buildRequest(smallhist))
+        print(f"Partition finish")
+            
+    def oldpartitionWork(self):
         numWorkers = len(self.workers)
         allKeysEveryWhere = []
         for w in self.workers:
@@ -422,16 +474,30 @@ class HandShakeServer(handshake_pb2_grpc.HandShakeServicer):
         unique_keys = np.array(unique_keys)
         chopped_keys = np.array_split(unique_keys, numWorkers)
         num_chops = len(chopped_keys)
-        for idx,w in enumerate(self.workers):
+        for idx,assignedworker in enumerate(self.workers):
             if idx < num_chops:
-                parm = {'keys': chopped_keys[idx]}
+                which_keys = chopped_keys[idx]
             else:
-                parm = {'keys': []}
-            if w.islocal:
-                self.local_work = parm
+                which_keys = []
+            temp_key_list_of_dds = {k:[] for k in which_keys}
+            for dataworker in self.workers:
+                if dataworker.islocal:
+                    key_dd_dict = self.extractSpecificKeys(which_keys)
+                else:
+                    req = self.buildRequest(which_keys)
+                    resp = dataworker.stub.GetKeysAndData(req)
+                    key_dd_dict = self.extractResponse(resp)
+                print(f"Controller appending to work list")
+                for key,dd in key_dd_dict.items():
+                    temp_key_list_of_dds[key].append(dd)                
+            print(f"{self.mychannel} assigning work to {assignedworker.channel}")
+            if assignedworker.islocal:
+                self.key_list_of_dds = temp_key_list_of_dds
             else:
-                req = self.buildRequest(parm)
-                w.stub.PrepareLocalWork(req)
+                req = self.buildRequest(temp_key_list_of_dds)
+                assignedworker.stub.PrepareLocalWork(req)
+        print(f"Partitions assigned")
+            
 
     def process_exception(self, e, context):
         stack_trace = traceback.format_exc()
@@ -493,32 +559,18 @@ class HandShakeServer(handshake_pb2_grpc.HandShakeServicer):
             ports: np.array = np.array(request.ports, dtype=int)
             channels = [gethostname() + ':' + str(p) for p in ports]
             self.assignWorkers(channels)
-            for w in self.workers:
-                if not w.islocal:
-                    w.stub.BroadcastChannels(self.buildRequest(channels))
-            self.assignWork()
+            # for w in self.workers:
+            #     if not w.islocal:
+            #         w.stub.BroadcastChannels(self.buildRequest(channels))
+            self.partitionWork()
             return handshake_pb2.EmptyResponse()  
         except Exception as e:
             self.process_exception(e, context)
             return handshake_pb2.EmptyResponse()  
 
     def do_merger_work(self):
-        which_keys = self.local_work['keys']
-        key_list_of_dds = {}
-        for w in self.workers:
-            if w.islocal:
-                key_dd_dict = self.extractSpecificKeys(which_keys)
-            else:
-                req = self.buildRequest(which_keys)
-                resp = w.stub.GetKeysAndData(req)
-                key_dd_dict = self.extractResponse(resp)
-            for key,dd in key_dd_dict.items():
-                if key not in key_list_of_dds.keys():
-                    key_list_of_dds[key] = []
-                key_list_of_dds[key].append(dd)
-        self.hists = {}
-        for key,ddlist in key_list_of_dds.items():
-            self.hists[key] = DynamicDist.merge_many(ddlist)
+        print(f"{self.mychannel}  {len(self.key_list_of_dds)} invocations of DynamicDist.merge_many")
+        self.hists = {key:DynamicDist.merge_many(ddlist) for key,ddlist in self.key_list_of_dds.items()}
 
     def CompleteLocalAggregation(self, request, context):
         for w in self.workers:
@@ -546,7 +598,7 @@ class HandShakeServer(handshake_pb2_grpc.HandShakeServicer):
     def AggregateLocal(self, request, context):
         print(f"On {self.mychannel} AggregateLocal starting")
         try:
-            self.do_merger_work()
+            # self.do_merger_work()
             print(f"On {self.mychannel} AggregateLocal finish")
             self._status = handshake_pb2.FINISHED_LOCAL_AGGREGATIONS_AWAITING_SIGNAL
             return handshake_pb2.AggregateLocalResponse(return_code=0)
@@ -625,7 +677,7 @@ class HandShakeServer(handshake_pb2_grpc.HandShakeServicer):
         thishost = gethostname()
         print(f"On {self.mychannel} AggregateGlobal commencing")
         try:
-            self.do_merger_work()
+            # self.do_merger_work()
             print(f"On {self.mychannel} Computing tail risk")
             self.computeAndPersistTailRisk()
             self._status = handshake_pb2.FINISHED_GLOBAL_AGGREGATIONS_AWAITING_SIGNAL
