@@ -443,7 +443,7 @@ class HandShakeServer(handshake_pb2_grpc.HandShakeServicer):
                     gatherdds[k] = []
                 gatherdds[k].append(dd)
         print("Partition: Consolidating")
-        mergedds = {k:DynamicDist.merge(ddlist) for k,ddlist in gatherdds.items()}
+        mergedds = {k:DynamicDist.merge_many(ddlist) for k,ddlist in gatherdds.items()}
         unique_keys = np.array(list(mergedds.keys()))
         chopped_keys = np.array_split(unique_keys, numWorkers)
         for idx,assignedworker in enumerate(self.workers):
