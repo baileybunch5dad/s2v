@@ -2,6 +2,7 @@ from typing import Dict
 import numpy as np
 import math
 
+
 class DynamicDist:
 
    def __init__(self
@@ -13,6 +14,7 @@ class DynamicDist:
                 , data: np.ndarray[np.double] = None
                 , freqs:np.ndarray[np.double] = None
                 , nan_freq: int = None
+                , serialized = False
                 ):
 
       # Size of the buffer used to hold the initial set of samples
@@ -50,10 +52,32 @@ class DynamicDist:
                # Set the bin offset
                self.bin_offset = np.nanmin(data)
             # Load the binned data into the self.bins dictionary
-            self.merge(data = data, freqs = freqs, nan_freq = nan_freq)
+            self.merge(data = data, freqs = freqs, nan_freq = nan_freq, compute_bins = not serialized, group_by = not serialized)
 
 
-   def compute_hist(self, data, freqs = None, compute_bins = True):
+   # Serialization method
+   def __reduce__(self):
+
+      # Get internal data and frequencies for serialization
+      data, freqs, nan_freq = self.get_merge_data(centered = False)
+
+      # Return the class and the arguments to reconstruct the object
+      return (self.__class__
+               , (self.n_bins
+                  , self.buffer_size
+                  , self.bin_size
+                  , self.bin_offset
+                  , self.rebalance_factor
+                  , data
+                  , freqs
+                  , nan_freq
+                  , True # serialized
+                  )
+               , None
+            )
+
+
+   def compute_hist(self, data, freqs = None, compute_bins = True, group_by = True):
 
       if compute_bins:
          # Map each data point to a bin
@@ -62,9 +86,12 @@ class DynamicDist:
          # The data is already binned
          bins = data
 
-      # Aggregate the bins with the same value
-      group_bins, inverse = np.unique(bins, return_inverse = True)
-      group_freqs = np.bincount(inverse, weights = freqs).astype(int)
+      if compute_bins or group_by:
+         # Aggregate the bins with the same value
+         group_bins, inverse = np.unique(bins, return_inverse = True)
+         group_freqs = np.bincount(inverse, weights = freqs).astype(int)
+      else:
+         return bins, freqs
 
       return group_bins, group_freqs
 
@@ -194,12 +221,12 @@ class DynamicDist:
       # Return the result
       return bins, hist, nan_freq
 
-   def merge(self, data, freqs = None, nan_freq = None):
+   def merge(self, data, freqs = None, nan_freq = None, compute_bins = True, group_by = True):
       # Check if we are past the initialization stage
       #   self.bin_size == self.bin_size is equivalent to ! np.isnan(self.bin_size), but faster
       if self.bin_size == self.bin_size:
          # Group the bins
-         group_bins, group_freqs = self.compute_hist(data = data, freqs = freqs)
+         group_bins, group_freqs = self.compute_hist(data = data, freqs = freqs, compute_bins = compute_bins, group_by = group_by)
 
          # Merge the grouped bins and frequencies inside the bins dictionary
          for key, val in zip(group_bins, group_freqs):
@@ -314,9 +341,10 @@ class DynamicDist:
                   # Set the result to the current object
                   result = obj
 
-      # if still in sample space prepare bins for tail_risk
+      # If still in sample space prepare bins for tail_risk
       if np.isnan(result.bin_size):
+         # Compute the bin size
          result.load_bins()
-         
+
       # Return the merged object
       return result
