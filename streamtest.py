@@ -71,7 +71,8 @@ def before_after(size):
     print(f"Comparing DynamicDist before after pickle with size={size}")
     dd1 = DynamicDist()
     dd1.add_many(np.random.uniform(low=100,high=200,size=size))    
-    dd2 = pickle.loads(pickle.dumps(dd1))
+    b = pickle.dumps(dd1)
+    dd2 = pickle.loads(b)
     compare_objects(dd1, dd2)
     
 

@@ -133,7 +133,7 @@ class DynamicDist:
          nan_freq = self.bins.pop(np.nan, None)
          # Load the bin keys and values into numpy arrays
          data = np.fromiter(self.bins.keys(), dtype = int, count = len(self.bins))
-         freqs = np.fromiter(self.bins.values(), dtype = np.uint64, count = len(self.bins))
+         freqs = np.fromiter(self.bins.values(), dtype = np.int64, count = len(self.bins))
          
          # Compute the new bin size
          max_value = self.bin_offset + np.nanmax(data) * self.bin_size
@@ -157,7 +157,7 @@ class DynamicDist:
          freqs = None
          compute_bins = True
          if self.n_dups > 0:
-            freqs = np.ones((self.n), dtype = np.uint64)
+            freqs = np.ones((self.n), dtype = np.int64)
             freqs[0] = self.n_dups
             self.n_dups = 0
          # Deallocate the buffer
@@ -208,7 +208,7 @@ class DynamicDist:
          # Extract the frequency of NaN entries (if any)
          nan_freq = self.bins.pop(np.nan, None)
          # Create Numpy arrays from the keys and values of the dictionary
-         hist = np.fromiter(self.bins.values(), dtype = np.uint64, count = len(self.bins))
+         hist = np.fromiter(self.bins.values(), dtype = np.int64, count = len(self.bins))
          bins_index = np.fromiter(self.bins.keys(), dtype = int, count = len(self.bins))
          if serialized:
             # Return the bin indexes as they are
@@ -244,7 +244,7 @@ class DynamicDist:
             self.bins[key] = self.bins.get(key, 0) + val
 
          # Update the number of samples processed
-         self.n += np.sum(group_freqs)
+         self.n += group_freqs.sum()
 
          # Keep track of NaN values (if any)
          if nan_freq:
@@ -300,7 +300,7 @@ class DynamicDist:
       else:
          # Extract the frequency of NaN entries (if any)
          nan_freq = self.bins.pop(np.nan, None)
-         hist = np.fromiter(self.bins.values(), dtype = np.uint64, count = len(self.bins))
+         hist = np.fromiter(self.bins.values(), dtype = np.int64, count = len(self.bins))
          bins = self.bin_offset + np.fromiter(self.bins.keys(), dtype = int, count = len(self.bins)) * self.bin_size + 0.5*self.bin_size*centered
 
          # Sort the entries
