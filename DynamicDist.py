@@ -14,6 +14,7 @@ class DynamicDist:
                 , data: np.ndarray[np.double] = None
                 , freqs:np.ndarray[np.double] = None
                 , nan_freq: int = None
+                , serialized = False
                 ):
 
       # Size of the buffer used to hold the initial set of samples
@@ -48,18 +49,20 @@ class DynamicDist:
          else:
             # Check if the bin_offset is nan
             if np.isnan(self.bin_offset):
+               # If the bin_offset is not set, then the constructor was called directly. The data is not serialized
+               serialized = False
                # Set the bin offset
                self.bin_offset = np.nanmin(data)
             # Load the binned data into the self.bins dictionary
-            self.merge(data = data, freqs = freqs, nan_freq = nan_freq)
+            self.merge(data = data, freqs = freqs, nan_freq = nan_freq, serialized = serialized)
 
 
    # Serialization method
    def __reduce__(self):
 
       # Get internal data and frequencies for serialization
-      data, freqs, nan_freq = self.get_merge_data()
-
+      serialized = True
+      data, freqs, nan_freq = self.get_merge_data(serialized = serialized)
       # Return the class and the arguments to reconstruct the object
       return (self.__class__
                , (self.n_bins
@@ -70,8 +73,8 @@ class DynamicDist:
                   , data
                   , freqs
                   , nan_freq
+                  , serialized
                   )
-               , None
             )
 
 
@@ -198,7 +201,7 @@ class DynamicDist:
             self.load_bins()
 
 
-   def get_merge_data(self, centered = True):
+   def get_merge_data(self, centered = True, serialized = False):
       # Check if we are past the initialization stage 
       #   self.bin_size == self.bin_size is equivalent to ! np.isnan(self.bin_size), but faster
       if self.bin_size == self.bin_size:
@@ -206,7 +209,13 @@ class DynamicDist:
          nan_freq = self.bins.pop(np.nan, None)
          # Create Numpy arrays from the keys and values of the dictionary
          hist = np.fromiter(self.bins.values(), dtype = np.uint64, count = len(self.bins))
-         bins = self.bin_offset + np.fromiter(self.bins.keys(), dtype = int, count = len(self.bins)) * self.bin_size + 0.5*self.bin_size*centered
+         bins_index = np.fromiter(self.bins.keys(), dtype = int, count = len(self.bins))
+         if serialized:
+            # Return the bin indexes as they are
+            bins = bins_index
+         else:
+            # Create the bins using the bin offset and bin size
+            bins = self.bin_offset + bins_index * self.bin_size + 0.5*self.bin_size*centered
       else:
          # Get the raw data from the buffer and return it as a numpy array
          bins = np.array(self._buffer[0:self.n])
@@ -216,12 +225,19 @@ class DynamicDist:
       # Return the result
       return bins, hist, nan_freq
 
-   def merge(self, data, freqs = None, nan_freq = None):
+   def merge(self, data, freqs = None, nan_freq = None, serialized = False):
       # Check if we are past the initialization stage
       #   self.bin_size == self.bin_size is equivalent to ! np.isnan(self.bin_size), but faster
       if self.bin_size == self.bin_size:
-         # Group the bins
-         group_bins, group_freqs = self.compute_hist(data = data, freqs = freqs)
+
+         # Check if merge data is coming from a serialized object (pickle.load)
+         if serialized:
+            # Data and Frequencies are already binned
+            group_bins = data
+            group_freqs = freqs
+         else:
+            # Group the bins
+            group_bins, group_freqs = self.compute_hist(data = data, freqs = freqs)
 
          # Merge the grouped bins and frequencies inside the bins dictionary
          for key, val in zip(group_bins, group_freqs):

@@ -325,7 +325,9 @@ class HandShakeServer(handshake_pb2_grpc.HandShakeServicer):
         return self.buildResponse(self.hists)
     
     def SetAllDistributions(self, request, context):
+        # print(f"SetAllDistributions Request {len(request.data):,d} bytes") 
         self.hists = self.extractRequest(request)
+        return handshake_pb2.EmptyResponse()
     
     def GetHistograms(self, request, context):
         # allhists = []
@@ -446,7 +448,7 @@ class HandShakeServer(handshake_pb2_grpc.HandShakeServicer):
         mergedds = {k:DynamicDist.merge_many(ddlist) for k,ddlist in gatherdds.items()}
         unique_keys = np.array(list(mergedds.keys()))
         chopped_keys = np.array_split(unique_keys, numWorkers)
-        num_cops = len(chopped_keys)
+        num_chops = len(chopped_keys)
         for idx,assignedworker in enumerate(self.workers):
             if idx < num_chops:
                 which_keys = chopped_keys[idx]
@@ -457,7 +459,9 @@ class HandShakeServer(handshake_pb2_grpc.HandShakeServicer):
             if assignedworker.islocal:
                 self.hists = smallhist
             else:
-                assignedworker.stub.SetAllDistributions(self.buildRequest(smallhist))
+                request = self.buildRequest(smallhist)
+                # print(f"PartitionWork Request={len(request.data):,d} bytes")
+                assignedworker.stub.SetAllDistributions(request)
         print(f"Partition finish")
             
     def oldpartitionWork(self):
@@ -549,7 +553,7 @@ class HandShakeServer(handshake_pb2_grpc.HandShakeServicer):
             for w in self.workers:
                 if not w.islocal:
                     w.stub.BroadcastChannels(self.buildRequest(channels))
-            self.assignWork()
+            self.partitionWork()
             return handshake_pb2.EmptyResponse()  
         except Exception as e:
             self.process_exception(e, context)
@@ -601,7 +605,7 @@ class HandShakeServer(handshake_pb2_grpc.HandShakeServicer):
         try:
             # self.do_merger_work()
             print(f"On {self.mychannel} AggregateLocal finish")
-            self._status = handshake_pb2.FINISHED_LOCAL_AGGREGATIONS_AWAITING_SIGNAL
+            # self._status = handshake_pb2.FINISHED_LOCAL_AGGREGATIONS_AWAITING_SIGNAL
             return handshake_pb2.AggregateLocalResponse(return_code=0)
         except Exception as e:
             self.process_exception(e, context)
@@ -782,13 +786,13 @@ def serve(q, id:int = 10, tls:bool = False):
             certificate = f.read()
 
         server_credentials = grpc.ssl_server_credentials([(private_key, certificate)])
-        server = grpc.server(futures.ThreadPoolExecutor(max_workers=5), options=channel_options())
+        server = grpc.server(futures.ThreadPoolExecutor(max_workers=5), options=channel_options()) # , compression=grpc.Compression.Gzip)
         newport = server.add_secure_port('[::]:0', server_credentials)
         client_credentials = grpc.ssl_channel_credentials(root_certificates=certificate)
         # hs = HandShakeServer(id, server, client_credentials)
         # handshake_pb2_grpc.add_HandShakeServicer_to_server(hs, server)
     else:
-        server = grpc.server(futures.ThreadPoolExecutor(max_workers=5), options=channel_options())
+        server = grpc.server(futures.ThreadPoolExecutor(max_workers=5), options=channel_options()) # , compression=grpc.Compression.Gzip)
         newport = server.add_insecure_port('[::]:0')
         client_credentials = None
 
@@ -901,10 +905,12 @@ if __name__ == "__main__":
         process = multiprocessing.Process(target=serve, args=(queue, idx, tls), name="Server"+str(idx))
         process.start()
         processes.append(process)
-    time.sleep(1)
     ports = []
-    while not queue.empty():
-        ports.append(queue.get())
+    while len(ports) < nthreads:
+        if queue.empty():
+            time.sleep(1)
+        else:
+            ports.append(queue.get())
     queue.close()
 
     curhost = gethostname()

@@ -191,6 +191,8 @@ public:
         handshake::ArrowTableResponse response;
 
         grpc::ClientContext context;
+        // context.set_compression_algorithm(GRPC_COMPRESS_GZIP); // Enable GZIP comp
+
 
         // Send the RPC
 
@@ -303,6 +305,8 @@ public:
 
         // Set up context
         grpc::ClientContext context;
+        // context.set_compression_algorithm(GRPC_COMPRESS_GZIP); // Enable GZIP comp
+
 
         // Call RPC
         grpc::Status status = stub_->ProcessData(&context, request, &response);
@@ -315,6 +319,8 @@ public:
         handshake::ShutdownRequest request;
         handshake::ShutdownResponse response;
         grpc::ClientContext context;
+        // context.set_compression_algorithm(GRPC_COMPRESS_GZIP); // Enable GZIP comp
+
 
         grpc::Status status = stub_->Shutdown(&context, request, &response);
         checkGrpcStatus(status);
@@ -326,6 +332,8 @@ public:
         handshake::EmptyRequest request;
         handshake::StateMessage response;
         grpc::ClientContext context;
+        // context.set_compression_algorithm(GRPC_COMPRESS_GZIP); // Enable GZIP comp
+
         grpc::Status status = stub_->GetState(&context, request, &response);
         checkGrpcStatus(status);
         auto state = response.workerstatus();
@@ -338,6 +346,8 @@ public:
         handshake::EmptyResponse response;
         request.set_workerstatus(newstate);
         grpc::ClientContext context;
+        // context.set_compression_algorithm(GRPC_COMPRESS_GZIP); // Enable GZIP comp
+
         grpc::Status status = stub_->SetState(&context, request, &response);
         checkGrpcStatus(status);
         return;
@@ -347,6 +357,7 @@ public:
         handshake::HelloRequest request;
         handshake::HelloResponse response;
         grpc::ClientContext context;
+        // context.set_compression_algorithm(GRPC_COMPRESS_GZIP); // Enable GZIP comp
 
         std::cout << "invoke Hello(" << instr << ")" << std::endl;
         request.set_name(instr.c_str());
@@ -360,6 +371,8 @@ public:
         handshake::EmptyRequest request;
         handshake::EmptyResponse response;
         grpc::ClientContext context;
+        // context.set_compression_algorithm(GRPC_COMPRESS_GZIP); // Enable GZIP comp
+
         grpc::Status status = stub_->CompleteLocalAggregation(&context, request, &response);
         checkGrpcStatus(status);
     }
@@ -368,6 +381,8 @@ public:
         handshake::EmptyRequest request;
         handshake::EmptyResponse response;
         grpc::ClientContext context;
+        // context.set_compression_algorithm(GRPC_COMPRESS_GZIP); // Enable GZIP comp
+
         grpc::Status status = stub_->CompleteGlobalAggregation(&context, request, &response);
         checkGrpcStatus(status);
     }
@@ -377,6 +392,8 @@ public:
         // Call the Aggregate RPC
         handshake::EmptyResponse response;
         grpc::ClientContext context;
+        // context.set_compression_algorithm(GRPC_COMPRESS_GZIP); // Enable GZIP comp
+
         // std::chrono::system_clock::time_point deadline = std::chrono::system_clock::now() + std::chrono::minutes(5);
         // context.set_deadline(deadline);
         grpc::Status status = stub_->SetUpGlobalAggregation(&context, request, &response);
@@ -395,6 +412,8 @@ public:
         // Call the Aggregate RPC
         handshake::EmptyResponse response;
         grpc::ClientContext context;
+        // context.set_compression_algorithm(GRPC_COMPRESS_GZIP); // Enable GZIP comp
+
         // std::chrono::system_clock::time_point deadline = std::chrono::system_clock::now() + std::chrono::minutes(5);
         // context.set_deadline(deadline);
         grpc::Status status = stub_->SetUpLocalAggregation(&context, request, &response);
@@ -408,6 +427,8 @@ public:
         // Call the Aggregate RPC
         handshake::AggregateLocalResponse response;
         grpc::ClientContext context;
+        // context.set_compression_algorithm(GRPC_COMPRESS_GZIP); // Enable GZIP comp
+
         grpc::Status status = stub_->AggregateLocal(&context, request, &response);
         checkGrpcStatus(status);
         return response.return_code();
@@ -419,6 +440,8 @@ public:
         // Call the Aggregate RPC
         handshake::AggregateGlobalResponse response;
         grpc::ClientContext context;
+        // context.set_compression_algorithm(GRPC_COMPRESS_GZIP); // Enable GZIP comp
+
         grpc::Status status = stub_->AggregateGlobal(&context, request, &response);
         checkGrpcStatus(status);
         return response.return_code();

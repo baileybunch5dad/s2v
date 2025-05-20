@@ -13,3 +13,5 @@ grpcio-tools
 googleapis-common-protos
 pyarrow
 psycopg2-binary
+pystack
+pyspy
