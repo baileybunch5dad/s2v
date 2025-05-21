@@ -887,6 +887,16 @@ std::string getfqdn()
     return hoststr;
 }
 
+void completeLocalAgg(std::shared_ptr<HandShakeClient> client)
+{
+    client->CompleteLocalAggregation();
+}
+
+void completeGlobalAgg(std::shared_ptr<HandShakeClient> client)
+{
+    client->CompleteGlobalAggregation();
+}
+
 void runLocalAgg(std::shared_ptr<HandShakeClient> client)
 {
     client->AggregateLocal(ports);
@@ -895,6 +905,23 @@ void runLocalAgg(std::shared_ptr<HandShakeClient> client)
 void runGlobalAgg(std::shared_ptr<HandShakeClient> client)
 {
     client->AggregateGlobal();
+}
+
+void waitForClients(std::vector<std::shared_ptr<HandShakeClient>> &clients, const handshake::DistStatus desiredState)
+{
+    bool printedWaiting = false;
+    for (auto c : clients)
+    {
+        while (c->get_state() < desiredState)
+        {
+            if (!printedWaiting)
+            {
+                std::cout << "Waiting on workers" << std::endl;
+                printedWaiting = true;
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(1000)); // let other thread acquire the lock
+        }
+    }
 }
 
 bool tls = false;
@@ -1078,22 +1105,30 @@ int main(int argc, char **argv)
             thread.join();
     }
     threads.clear();
-    std::cout << "Setting up local aggregation" << std::endl;
     clients[0]->SetUpLocalAggregation(ports);
+    std::cout << "Starting distribution data shuffle" << std::endl;
     for (auto c : clients)
     {
         threads.emplace_back(runLocalAgg, c);
     }
-    for (auto &th : threads)
+    for (auto &thread : threads)
     {
-        th.join();
+        if (thread.joinable())
+            thread.join();
     }
+    std::cout << "Completed distribution data movement" << std::endl;
+    std::cout << "Starting merge_many local distribution mergers" << std::endl;
     threads.clear();
-    std::cout << "Local Aggregation finished" << std::endl;
-
-    clients[0]->CompleteLocalAggregation();
-
-    // clients[0]->SendDataFrame();
+    for(auto c : clients) 
+    {
+        threads.emplace_back(completeLocalAgg, c);
+    }
+    for (auto &thread : threads)
+    {
+        if (thread.joinable())
+            thread.join();
+    }
+    std::cout << "Completed merge_many local distribution mergers" << std::endl;
 
     if (controller)
     {
@@ -1108,14 +1143,15 @@ int main(int argc, char **argv)
         {
             if (!printedWaiting)
             {
-                std::cout << "Waiting on signal for worker to complete local aggregation" << std::endl;
-                printedWaiting = true;
+                std::cout << "Waiting on workers to begin global aggregation" << std::endl;
+                // printedWaiting = true;
             }
             std::this_thread::sleep_for(std::chrono::milliseconds(1000)); // let other thread acquire the lock
         }
     }
-    std::cout << "Global aggregation starting" << std::endl;
+    std::cout << "Starting global work partitioning" << std::endl;
 
+    threads.clear();
     for (auto c : clients)
     {
         threads.emplace_back(runGlobalAgg, c);
@@ -1125,25 +1161,19 @@ int main(int argc, char **argv)
         th.join();
     }
     threads.clear();
-    if (controller)
-    {
-        clients[0]->CompleteGlobalAggregation();
-    }
+    std::cout << "Completed global work partitioning" << std::endl;
+    std::cout << "Completed global merge_many and tail_risk" << std::endl;
 
-    printedWaiting = false;
     for (auto c : clients)
     {
-        while (c->get_state() < handshake::DistStatus::COMPLETED)
-        {
-            if (!printedWaiting)
-            {
-                std::cout << "Waiting on signal for global to complete" << std::endl;
-                printedWaiting = true;
-            }
-            std::this_thread::sleep_for(std::chrono::milliseconds(1000)); // let other thread acquire the lock
-        }
+        threads.emplace_back(completeGlobalAgg, c);
     }
-    std::cout << "Global Aggregation finished" << std::endl;
+    for (auto &th : threads)
+    {
+        th.join();
+    }
+    threads.clear();
+    std::cout << "Completed global merge_many and tail_risk" << std::endl;
 
     if (shutdown)
     {
@@ -1152,13 +1182,15 @@ int main(int argc, char **argv)
             client->Shutdown();
         }
     }
+    std::cout << "All clients shut down" << std::endl;
 
     if (pythrd.joinable())
     {
         pythrd.join();
     }
+    std::cout << "Python shut down" << std::endl;
 
-    exit(0);
+    // exit(0);
 
     return 0;
 }
