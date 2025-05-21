@@ -1,4 +1,4 @@
-
+import gc
 from concurrent import futures
 import logging
 import os
@@ -433,6 +433,7 @@ class HandShakeServer(handshake_pb2_grpc.HandShakeServicer):
         numWorkers = len(self.workers)
         gatherdds = {}
         print("Partition: Gathering keys")
+        t1 = time.perf_counter()
         for w in self.workers:
             if w.islocal:
                 remotehists = self.hists
@@ -444,8 +445,12 @@ class HandShakeServer(handshake_pb2_grpc.HandShakeServicer):
                 if k not in gatherdds.keys():
                     gatherdds[k] = []
                 gatherdds[k].append(dd)
+        t2 = time.perf_counter()
         print("Partition: Consolidating")
+        gc.collect()
         mergedds = {k:DynamicDist.merge_many(ddlist) for k,ddlist in gatherdds.items()}
+        gc.collect()
+        t3 = time.perf_counter()
         unique_keys = np.array(list(mergedds.keys()))
         chopped_keys = np.array_split(unique_keys, numWorkers)
         num_chops = len(chopped_keys)
@@ -462,6 +467,13 @@ class HandShakeServer(handshake_pb2_grpc.HandShakeServicer):
                 request = self.buildRequest(smallhist)
                 # print(f"PartitionWork Request={len(request.data):,d} bytes")
                 assignedworker.stub.SetAllDistributions(request)
+            smallhist = None
+            gc.collect()
+        t4 = time.perf_counter()
+        mergedds = None
+        gc.collect()
+        t4 = time.perf_counter()
+        print(f"GetAll={t2-t1} merge_many={t3-t2} SetAll={t4-t3}")
         print(f"Partition finish")
             
     def oldpartitionWork(self):
