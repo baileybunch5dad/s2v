@@ -4,6 +4,8 @@ package handshake;
 
 
 service HandShake {
+  rpc Ping(EmptyRequest) returns (EmptyResponse) {}
+  rpc Aggregate(AggregationRequest) returns (EmptyResponse) {}
   rpc SetState(StateMessage) returns (EmptyResponse) {}
   rpc GetState(EmptyRequest) returns (StateMessage) {}
   rpc ProcessArrowStream(ArrowTableRequest) returns (ArrowTableResponse) {}
@@ -30,6 +32,10 @@ service HandShake {
   rpc BroadcastChannels(RequestObject) returns (EmptyResponse) {}
   rpc GetAllDistributions(EmptyRequest) returns (ResponseObject) {}
   rpc SetAllDistributions(RequestObject) returns (EmptyResponse) {}
+}
+
+message AggregationRequest {
+  repeated int32 ports = 1;
 }
 
 message SetUpGlobalAggregationRequest {

@@ -60,6 +60,26 @@ class HandShakeServer(handshake_pb2_grpc.HandShakeServicer):
         self._status = handshake_pb2.NOT_STARTED
         self.error_count = 0
         self.mychannel = channelTarget
+        
+    def Ping(self, request, context):
+        return handshake_pb2.EmptyResponse()
+            
+    def Aggregate(self, request, context):
+        try:
+            ports: np.array = np.array(request.ports, dtype=int)
+            self.SetUpLocalAggregation(handshake_pb2.SetUpLocalAggregationRequest(ports=ports), context)
+            response_futures = [w.stub.AggregateLocal.future(handshake_pb2.EmptyRequest()) for w in self.workers]
+            responses = [f.result() for f in response_futures]
+            response_futures = [w.stub.CompleteLocalAggregation.future(handshake_pb2.EmptyRequest()) for w in self.workers]
+            responses = [f.result() for f in response_futures]
+            self.SetUpGlobalAggregation(request, context)
+            response_futures = [w.stub.AggregateGlobal.future(handshake_pb2.EmptyRequest()) for w in self.workers]
+            responses = [f.result() for f in response_futures]
+            response_futures = [w.stub.CompleteGlobalAggregation.future(handshake_pb2.EmptyRequest()) for w in self.workers]
+            responses = [f.result() for f in response_futures]
+        except Exception as e:
+            self.process_exception(e, context)
+        return handshake_pb2.EmptyResponse()
 
     def convertArrowDirectlyToDictionary(self, arrow_table):
         grouped = arrow_table.group_by("scenario").aggregate([("par_bal", "list")])
@@ -995,6 +1015,7 @@ if __name__ == "__main__":
             addHostToTable(channelName)
     for p in ports:
         print(str(p),end=' ')
+    
     print()
     print(f"Python:: TLS encrytion {tls}")
     print(f"hosts={getAllHosts()}")

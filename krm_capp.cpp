@@ -352,6 +352,29 @@ public:
         checkGrpcStatus(status);
         return;
     }
+
+    void Ping()
+    {
+        handshake::EmptyRequest request;
+        handshake::EmptyResponse response;
+        grpc::ClientContext context;
+        grpc::Status status = stub_->Ping(&context, request, &response);
+        checkGrpcStatus(status);
+    }
+
+    void Aggregate(std::vector<int> ports)
+    {
+        handshake::AggregationRequest request;
+        for (auto p : ports)
+        {
+            request.add_ports(p);
+        }
+        handshake::EmptyResponse response;
+        grpc::ClientContext context;
+        grpc::Status status = stub_->Aggregate(&context, request, &response);
+        checkGrpcStatus(status);
+    }
+
     std::string Hello(std::string instr)
     {
         handshake::HelloRequest request;
@@ -1105,75 +1128,76 @@ int main(int argc, char **argv)
             thread.join();
     }
     threads.clear();
-    clients[0]->SetUpLocalAggregation(ports);
-    std::cout << "Starting distribution data shuffle" << std::endl;
-    for (auto c : clients)
-    {
-        threads.emplace_back(runLocalAgg, c);
-    }
-    for (auto &thread : threads)
-    {
-        if (thread.joinable())
-            thread.join();
-    }
-    std::cout << "Completed distribution data movement" << std::endl;
-    std::cout << "Starting merge_many local distribution mergers" << std::endl;
-    threads.clear();
-    for(auto c : clients) 
-    {
-        threads.emplace_back(completeLocalAgg, c);
-    }
-    for (auto &thread : threads)
-    {
-        if (thread.joinable())
-            thread.join();
-    }
-    std::cout << "Completed merge_many local distribution mergers" << std::endl;
+    clients[0]->Aggregate(ports);
+    // clients[0]->SetUpLocalAggregation(ports);
+    // std::cout << "Starting distribution data shuffle" << std::endl;
+    // for (auto c : clients)
+    // {
+    //     threads.emplace_back(runLocalAgg, c);
+    // }
+    // for (auto &thread : threads)
+    // {
+    //     if (thread.joinable())
+    //         thread.join();
+    // }
+    // std::cout << "Completed distribution data movement" << std::endl;
+    // std::cout << "Starting merge_many local distribution mergers" << std::endl;
+    // threads.clear();
+    // for(auto c : clients) 
+    // {
+    //     threads.emplace_back(completeLocalAgg, c);
+    // }
+    // for (auto &thread : threads)
+    // {
+    //     if (thread.joinable())
+    //         thread.join();
+    // }
+    // std::cout << "Completed merge_many local distribution mergers" << std::endl;
 
-    if (controller)
-    {
-        std::cout << "Controller: Setting up global aggregation" << std::endl;
-        clients[0]->SetUpGlobalAggregationRequest();
-    }
+    // if (controller)
+    // {
+    //     std::cout << "Controller: Setting up global aggregation" << std::endl;
+    //     clients[0]->SetUpGlobalAggregationRequest();
+    // }
 
-    bool printedWaiting = false;
-    for (auto c : clients)
-    {
-        while (c->get_state() < handshake::DistStatus::BUILDING_GLOBAL_AGGREGATIONS)
-        {
-            if (!printedWaiting)
-            {
-                std::cout << "Waiting on workers to begin global aggregation" << std::endl;
-                // printedWaiting = true;
-            }
-            std::this_thread::sleep_for(std::chrono::milliseconds(1000)); // let other thread acquire the lock
-        }
-    }
-    std::cout << "Starting global work partitioning" << std::endl;
+    // bool printedWaiting = false;
+    // for (auto c : clients)
+    // {
+    //     while (c->get_state() < handshake::DistStatus::BUILDING_GLOBAL_AGGREGATIONS)
+    //     {
+    //         if (!printedWaiting)
+    //         {
+    //             std::cout << "Waiting on workers to begin global aggregation" << std::endl;
+    //             // printedWaiting = true;
+    //         }
+    //         std::this_thread::sleep_for(std::chrono::milliseconds(1000)); // let other thread acquire the lock
+    //     }
+    // }
+    // std::cout << "Starting global work partitioning" << std::endl;
 
-    threads.clear();
-    for (auto c : clients)
-    {
-        threads.emplace_back(runGlobalAgg, c);
-    }
-    for (auto &th : threads)
-    {
-        th.join();
-    }
-    threads.clear();
-    std::cout << "Completed global work partitioning" << std::endl;
-    std::cout << "Completed global merge_many and tail_risk" << std::endl;
+    // threads.clear();
+    // for (auto c : clients)
+    // {
+    //     threads.emplace_back(runGlobalAgg, c);
+    // }
+    // for (auto &th : threads)
+    // {
+    //     th.join();
+    // }
+    // threads.clear();
+    // std::cout << "Completed global work partitioning" << std::endl;
+    // std::cout << "Completed global merge_many and tail_risk" << std::endl;
 
-    for (auto c : clients)
-    {
-        threads.emplace_back(completeGlobalAgg, c);
-    }
-    for (auto &th : threads)
-    {
-        th.join();
-    }
-    threads.clear();
-    std::cout << "Completed global merge_many and tail_risk" << std::endl;
+    // for (auto c : clients)
+    // {
+    //     threads.emplace_back(completeGlobalAgg, c);
+    // }
+    // for (auto &th : threads)
+    // {
+    //     th.join();
+    // }
+    // threads.clear();
+    // std::cout << "Completed global merge_many and tail_risk" << std::endl;
 
     if (shutdown)
     {
