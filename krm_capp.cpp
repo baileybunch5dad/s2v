@@ -362,13 +362,9 @@ public:
         checkGrpcStatus(status);
     }
 
-    void Aggregate(std::vector<int> ports)
+    void Aggregate()
     {
-        handshake::AggregationRequest request;
-        for (auto p : ports)
-        {
-            request.add_ports(p);
-        }
+        handshake::EmptyRequest request;
         handshake::EmptyResponse response;
         grpc::ClientContext context;
         grpc::Status status = stub_->Aggregate(&context, request, &response);
@@ -959,7 +955,7 @@ int main(int argc, char **argv)
     bool shutdown = true;
     std::thread pythrd;
     // std::vector<int> ports;
-    bool controller = false;
+    // bool controller = false;
 
     std::cout << argv[0] << "Running  on " << getfqdn() << std::endl;
 
@@ -1003,10 +999,10 @@ int main(int argc, char **argv)
         {
             shutdown = false;
         }
-        if (starts_with(s, "--controller"))
-        {
-            controller = true;
-        }
+        // if (starts_with(s, "--controller"))
+        // {
+        //     controller = true;
+        // }
     }
 
     if (inprocessPython)
@@ -1128,7 +1124,7 @@ int main(int argc, char **argv)
             thread.join();
     }
     threads.clear();
-    clients[0]->Aggregate(ports);
+    clients[0]->Aggregate();
     // clients[0]->SetUpLocalAggregation(ports);
     // std::cout << "Starting distribution data shuffle" << std::endl;
     // for (auto c : clients)
@@ -1199,14 +1195,14 @@ int main(int argc, char **argv)
     // threads.clear();
     // std::cout << "Completed global merge_many and tail_risk" << std::endl;
 
-    if (shutdown)
-    {
-        for (auto client : clients)
-        {
-            client->Shutdown();
-        }
-    }
-    std::cout << "All clients shut down" << std::endl;
+    // if (shutdown)
+    // {
+    //     for (auto client : clients)
+    //     {
+    //         client->Shutdown();
+    //     }
+    // }
+    // std::cout << "All clients shut down" << std::endl;
 
     if (pythrd.joinable())
     {

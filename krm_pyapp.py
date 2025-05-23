@@ -60,23 +60,120 @@ class HandShakeServer(handshake_pb2_grpc.HandShakeServicer):
         self._status = handshake_pb2.NOT_STARTED
         self.error_count = 0
         self.mychannel = channelTarget
+        self.receivedControllerSignal = False
+        self.controller_event = threading.Event()
+        self.receivedShutdownSignal = False
+        self.finished_ahead_event = threading.Event()
         
     def Ping(self, request, context):
         return handshake_pb2.EmptyResponse()
+    
+    def SetPorts(self, request, context):
+        self.localPorts = np.array(request.ports, dtype=int)
+        return handshake_pb2.EmptyResponse()
             
+    def ComputeAndPersistTailDistributions(self, request, context):
+        try:
+            self.computeAndPersistTailRisk()
+            self._status = handshake_pb2.COMPLETED
+        except Exception as e:
+            self.process_exception(e, context)
+        return handshake_pb2.EmptyResponse()
+    
+    def waitOnControllerSignal(self):
+        if not self.receivedControllerSignal:
+            print("Worker finished ahead of controller, waiting on go signal")
+            self.controller_event.wait()
+        print("Worker received go signal from controller")
+
+    def waitOnShutdownSignal(self):
+        # print("Worker finished ahead of controller, waiting on shutdown signal")
+        # self.finished_ahead_event.wait()
+        while not self.receivedShutdownSignal:
+            time.sleep(1)
+        # print("Worker received shutdown signal from controller")
+            
+    def ControllerSaysGo(self, request, context):
+        try:
+            printed = False
+            while self._status < handshake_pb2.FINISHED_LOCAL_AGGREGATIONS_AWAITING_SIGNAL:
+                if not printed:
+                    print(f"{self.mychannel} received GO message from controller, blocking until local aggregation complete")
+                    printed = True
+                time.sleep(1)
+            print(f"{self.mychannel} controller said GO, local aggregations complete, continuing")
+            self.receivedControllerSignal = True
+            self.controller_event.set()
+        except Exception as e:
+            self.process_exception(e, context)
+        return handshake_pb2.EmptyResponse()
+        
+    def waitForAllLocalAggregationsToComplete(self):
+        while True:
+            allWorkersComplete = True
+            for w in self.workers:
+                if w.stub.GetState(handshake_pb2.EmptyRequest()).workerstatus < handshake_pb2.FINISHED_LOCAL_AGGREGATIONS_AWAITING_SIGNAL:
+                    allWorkersComplete = False
+                    print(f"    {self.mychannel} waiting on {w.channel} to complete local aggregations")
+                    time.sleep(1)
+            if allWorkersComplete:
+                break
+        # print(f"    {self.mychannel} all workers reporting local aggregation complete")
+
     def Aggregate(self, request, context):
         try:
-            ports: np.array = np.array(request.ports, dtype=int)
-            self.SetUpLocalAggregation(handshake_pb2.SetUpLocalAggregationRequest(ports=ports), context)
+            # ports: np.array = np.array(request.ports, dtype=int)
+            print(f"Aggregate: {self.mychannel}")
+            print(f"Aggregate: {self.mychannel} reduce: partition local machine merge_many")
+            self.SetUpLocalAggregation(handshake_pb2.SetUpLocalAggregationRequest(ports=self.localPorts), context)
+            print(f"Aggregate: {self.mychannel} map: start local machine merge_many")
             response_futures = [w.stub.AggregateLocal.future(handshake_pb2.EmptyRequest()) for w in self.workers]
             responses = [f.result() for f in response_futures]
             response_futures = [w.stub.CompleteLocalAggregation.future(handshake_pb2.EmptyRequest()) for w in self.workers]
             responses = [f.result() for f in response_futures]
-            self.SetUpGlobalAggregation(request, context)
-            response_futures = [w.stub.AggregateGlobal.future(handshake_pb2.EmptyRequest()) for w in self.workers]
-            responses = [f.result() for f in response_futures]
-            response_futures = [w.stub.CompleteGlobalAggregation.future(handshake_pb2.EmptyRequest()) for w in self.workers]
-            responses = [f.result() for f in response_futures]
+            print(f"Aggregate: {self.mychannel} map: finish local machine merge_many")
+            allHosts = getAllHosts()
+            smpMode = len(self.localPorts) == len(allHosts)
+            controllerHost = allHosts[0]
+            isController = self.mychannel == controllerHost
+            print(f"Aggregate: {self.mychannel} {smpMode=} {isController=}")
+            if smpMode:
+                print("Aggregate: SMP mode, do tail risk risk and send async shutdown signals")
+            else:
+                print(f"Aggregate: MPP mode")
+                if isController:
+                #     channels = getAllHosts()
+                #     self.assignWorkers(channels)
+                #     print(f"Aggregate: waitForAllLocalAggregationsToComplete")
+                #     self.waitForAllLocalAggregationsToComplete()
+                    # print(f"Aggregate: Controller {self.mychannel} setting setting GO for all workers after local")
+                    # response_futures = [w.stub.ControllerSaysGo.future(handshake_pb2.EmptyRequest()) for w in self.workers]
+                    # responses = [f.result() for f in response_futures]
+                    
+                    print(f"Aggregate: Controller {self.mychannel} reduce: partitioning merge_many")
+                    self.SetUpGlobalAggregation(request, context)
+                    
+                    print(f"Aggregate: Controller {self.mychannel} map start: merge_many")
+                    response_futures = [w.stub.AggregateGlobal.future(handshake_pb2.EmptyRequest()) for w in self.workers]
+                    responses = [f.result() for f in response_futures]
+                    response_futures = [w.stub.CompleteGlobalAggregation.future(handshake_pb2.EmptyRequest()) for w in self.workers]
+                    responses = [f.result() for f in response_futures]
+                    print(f"Aggregate: Controller {self.mychannel} map finish: merge_many")
+            if isController:
+                print(f"Aggregate: {self.mychannel} map: start persist tail distribution")
+                response_futures = [w.stub.ComputeAndPersistTailDistributions.future(handshake_pb2.EmptyRequest()) for w in self.workers]
+                responses = [f.result() for f in response_futures]
+                print(f"Aggregate: {self.mychannel} map: finish persist tail distribution")
+                print(f"Aggregate: {self.mychannel} map: start broadcast shutdown")
+                response_futures = [w.stub.Shutdown.future(handshake_pb2.EmptyRequest()) for w in self.workers]
+            else:
+                print(f"Aggregate: {self.mychannel} not controller, waiting on done signal to tear down client")
+                while self._status < handshake_pb2.COMPLETED:
+                    # print(f"Aggregate: {self.mychannel} not controller, yielding for controller shutdown stop event")
+                    # self._stop_event.wait()
+                    # self._stop_event.set()
+                    time.sleep(1)
+            print(f"Aggregate {self.mychannel} finishing Aggregate()")
         except Exception as e:
             self.process_exception(e, context)
         return handshake_pb2.EmptyResponse()
@@ -152,7 +249,7 @@ class HandShakeServer(handshake_pb2_grpc.HandShakeServicer):
         
         # Print the received data
         if not self.printed:
-            print(f"Pqython:: PID {os.getpid()} receiving frames like ")
+            print(f"Python:: PID {os.getpid()} receiving frames like ")
             print(df)
             sys.stdout.flush()
             self.printed = True
@@ -573,6 +670,7 @@ class HandShakeServer(handshake_pb2_grpc.HandShakeServicer):
 
     def assignWorkers(self, channels):
         self.workers = [Worker(self.getStub(channel), channel, self.mychannel) for channel in channels]
+        # print(f"   {self.mychannel} assigned {len(self.workers)} cooperative workers")
         # print(f"Workers for {self.mychannel}")
         # for w in self.workers:
         #     if w.islocal:
@@ -594,7 +692,7 @@ class HandShakeServer(handshake_pb2_grpc.HandShakeServicer):
         
     def SetUpGlobalAggregation(self, request, context):
         try:
-            print(f"Local Controller start SetUpGlobalAggregation")
+            # print(f"Local Controller start SetUpGlobalAggregation")
             channels = getAllHosts()
             self.assignWorkers(channels)
             for w in self.workers:
@@ -602,9 +700,10 @@ class HandShakeServer(handshake_pb2_grpc.HandShakeServicer):
                     printed = False
                     while(w.stub.GetState(handshake_pb2.EmptyRequest()).workerstatus < handshake_pb2.FINISHED_LOCAL_AGGREGATIONS_AWAITING_SIGNAL):
                         if not printed:
-                            print(f"{self.mychannel} waiting on {w.channel} to complete local aggregations")
+                            print(f"     {self.mychannel} waiting on {w.channel} to complete local aggregations")
                             printed = True
                         time.sleep(1)
+                    print(f"    {self.mychannel} worker {w.channel} completed local aggregation")
             for w in self.workers:
                 if not w.islocal:
                     w.stub.BroadcastChannels(self.buildRequest(channels))
@@ -615,7 +714,7 @@ class HandShakeServer(handshake_pb2_grpc.HandShakeServicer):
                     self._status =  handshake_pb2.BUILDING_GLOBAL_AGGREGATIONS
                 else:
                     w.stub.SetState(handshake_pb2.StateMessage(workerstatus=handshake_pb2.BUILDING_GLOBAL_AGGREGATIONS))
-            print(f"Local Controller complete SetUpGlobalAggregation")
+            # print(f"Local Controller complete SetUpGlobalAggregation")
             return handshake_pb2.EmptyResponse()  
         except Exception as e:
             self.process_exception(e, context)
@@ -623,7 +722,7 @@ class HandShakeServer(handshake_pb2_grpc.HandShakeServicer):
     
     def SetUpLocalAggregation(self, request, context):
         try:
-            print(f"Local Controller start SetUpLocalAggregation")
+            # print(f"Local Controller start SetUpLocalAggregation")
             ports: np.array = np.array(request.ports, dtype=int)
             channels = [gethostname() + ':' + str(p) for p in ports] 
             self.assignWorkers(channels)
@@ -631,7 +730,7 @@ class HandShakeServer(handshake_pb2_grpc.HandShakeServicer):
                 if not w.islocal:
                     w.stub.BroadcastChannels(self.buildRequest(channels))
             self.partitionWork()
-            print(f"Local Controller complete SetUpLocalAggregation")
+            # print(f"Local Controller complete SetUpLocalAggregation")
             return handshake_pb2.EmptyResponse()  
         except Exception as e:
             self.process_exception(e, context)
@@ -642,25 +741,24 @@ class HandShakeServer(handshake_pb2_grpc.HandShakeServicer):
         self.hists = {key:DynamicDist.merge_many(ddlist) for key,ddlist in self.key_list_of_dds.items()}
         
     def mergeDDs(self):
-        gc.collect()
+        # gc.collect()
         self.hists = {key:DynamicDist.merge_many(ddlist) for key,ddlist in self.gatherdds.items()}
         self.gatherdds = None
-        gc.collect()
+        # self.gatherdds = None
+        # gc.collect()
 
     def CompleteLocalAggregation(self, request, context):
-        print(f"{self.mychannel} start CompleteLocalAggregatione")
+        print(f"   {self.mychannel} start CompleteLocalAggregatione")
         self.mergeDDs()
         self._status = handshake_pb2.FINISHED_LOCAL_AGGREGATIONS_AWAITING_SIGNAL
-        print(f"{self.mychannel} complete CompleteLocalAggregatione")
+        print(f"   {self.mychannel} complete CompleteLocalAggregatione")
         return handshake_pb2.EmptyResponse()
 
     def CompleteGlobalAggregation(self, request, context):
-        print(f"{self.mychannel} start CompleteGlobalAggregatione")
+        print(f"   {self.mychannel} start CompleteGlobalAggregatione")
         self.mergeDDs()
         self._status = handshake_pb2.FINISHED_GLOBAL_AGGREGATIONS_AWAITING_SIGNAL
-        self.computeAndPersistTailRisk()
-        self._status = handshake_pb2.COMPLETED
-        print(f"{self.mychannel} complete CompleteGlobalAggregatione")
+        print(f"   {self.mychannel} complete CompleteGlobalAggregatione")
         return handshake_pb2.EmptyResponse()
             
     def gatherData(self):
@@ -696,11 +794,11 @@ class HandShakeServer(handshake_pb2_grpc.HandShakeServicer):
                     
     def AggregateLocal(self, request, context):
         try:
-            print(f"On {self.mychannel} AggregateLocal starting")
+            print(f"   {self.mychannel} AggregateLocal starting")
             self._status = handshake_pb2.BUILDING_LOCAL_AGGREGATIONS
             self.gatherData()
             # self.do_merger_work()
-            print(f"On {self.mychannel} AggregateLocal finish")
+            print(f"   {self.mychannel} AggregateLocal finish")
             return handshake_pb2.AggregateLocalResponse(return_code=0)
         except Exception as e:
             self.process_exception(e, context)
@@ -740,8 +838,17 @@ class HandShakeServer(handshake_pb2_grpc.HandShakeServicer):
                 return_code=1
                 )
 
+    def printHistInfo(self):
+        print(f"{self.mychannel} self.hists")
+        print(f"   len={len(self.hists.keys())}")
+        for k,dd in self.hists.items():
+            if dd is None:
+                print(f"ERRROR merge_many returned None!!!! for key={k}")
+                exit(1)
+        
     def computeAndPersistTailRisk(self):
-        print(f"{self.mychannel} Computing Value and Risk and Expected Shortfall for {len(self.hists.keys())} scenarios")
+        print(f"   {self.mychannel} Computing Value and Risk and Expected Shortfall for {len(self.hists.keys())} scenarios")
+        # self.printHistInfo()
         tuples = []
         for key,dd in self.hists.items():
             data, freqs, nan_freq = dd.get_merge_data()
@@ -776,10 +883,10 @@ class HandShakeServer(handshake_pb2_grpc.HandShakeServicer):
     def AggregateGlobal(self, request, context):
         # thishost = gethostname()
         try:
-            print(f"On {self.mychannel} AggregateGlobal commencing")
+            print(f"   {self.mychannel} AggregateGlobal commencing")
             self.gatherData()
             self._status = handshake_pb2.FINISHED_GLOBAL_AGGREGATIONS_AWAITING_SIGNAL
-            print(f"On {self.mychannel} AggregateGlobal completing")
+            print(f"   {self.mychannel} AggregateGlobal completing")
             return handshake_pb2.AggregateGlobalResponse(return_code=0)
         except Exception as e:
             self.process_exception(e, context)
@@ -835,6 +942,8 @@ class HandShakeServer(handshake_pb2_grpc.HandShakeServicer):
     
     def Shutdown(self, request, context):
         print(f"Shutdown RPC called. Post message to terminate server.  {self.mychannel}")
+        self.receivedShutdownSignal = True
+        # self.finished_ahead_event.set()
         self._stop_event.set()
         # return my_service_pb2.ShutdownResponse()
         # shutdown_thread = threading.Thread(target=self._shutdown, args=())
@@ -902,6 +1011,7 @@ def serve(q, id:int = 10, tls:bool = False):
     # server.wait_for_termination()
     stop_event.wait()
     print("Shutting down server")
+    time.sleep(3)
     server.stop(grace=5).wait()
     
     # print("Waiting on stop event")    
@@ -981,7 +1091,7 @@ if __name__ == "__main__":
     queue = multiprocessing.Queue()
     # queue = None
     processes = []
-    nthreads = 4
+    nthreads = 2
     tls = False
     for argument in sys.argv[1:]:
         if argument.startswith("--nthreads="):
@@ -1013,6 +1123,9 @@ if __name__ == "__main__":
             portfl.write(str(p) + ' ')
             channelName = curhost + ":" + str(p)
             addHostToTable(channelName)
+            channel = grpc.insecure_channel(channelName, options=channel_options())
+            stub = handshake_pb2_grpc.HandShakeStub(channel)
+            stub.SetPorts(handshake_pb2.PortsRequestObject(ports=ports))
     for p in ports:
         print(str(p),end=' ')
     
